@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eBike Stage Log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ground: #0f1b2d;
+  --ground-2: #16263d;
+  --ink: #f2efe6;
+  --muted: #a3b4cc;
+  --rule: rgba(242, 239, 230, .2);
+  --rule-strong: rgba(242, 239, 230, .55);
+  --z1: #2a9d8f; --z2: #8ab17d; --z3: #ffd23f; --z4: #f4a259; --z5: #ef6a43;
+  --on-zone: #0f1b2d;
+  --flag: #ffd23f;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --text: "Barlow", system-ui, sans-serif;
+  --gutter: clamp(16px, 4vw, 48px);
+}
+* { box-sizing: border-box; }
+html { background: var(--ground); color-scheme: dark; scrollbar-color: var(--rule-strong) var(--ground); }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 400 16px/1.5 var(--text); font-variant-numeric: tabular-nums; }
+::selection { background: var(--flag); color: var(--on-zone); }
+input, select, button { caret-color: var(--flag); font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--flag); outline-offset: 3px; }
+h1, h2 { font-family: var(--display); font-weight: 700; margin: 0; letter-spacing: .01em; text-transform: uppercase; text-wrap: balance; }
+h2 { font-size: 1.5rem; padding-top: 3.5rem; padding-bottom: .75rem; }
+.num { font-family: var(--display); font-weight: 600; font-variant-numeric: tabular-nums; line-height: .95; }
+.unit { font-family: var(--text); font-size: .8125rem; color: var(--muted); letter-spacing: .04em; }
+
+/* bar */
+.bar { display: flex; flex-wrap: wrap; gap: 12px 32px; align-items: baseline; padding: 20px var(--gutter); border-bottom: 1px solid var(--rule); }
+.bar h1 { font-size: 1.375rem; }
+.bar .spacer { flex: 1; }
+.pick { display: flex; align-items: center; gap: 8px; }
+.pick select { background: var(--ground-2); border: 1px solid var(--rule-strong); border-radius: 0; padding: 8px 12px; min-height: 44px; }
+.synthetic { font-size: .8125rem; color: var(--on-zone); background: var(--flag); padding: 4px 10px; font-weight: 600; }
+
+main { padding: 0 var(--gutter) 64px; max-width: 1560px; margin: 0 auto; }
+
+/* stage */
+.stage { display: grid; grid-template-columns: 240px 1fr; gap: 0 32px; padding-top: 32px; }
+.fields { display: grid; align-content: start; }
+.field { border-top: 1px solid var(--rule-strong); padding: 10px 0 16px; }
+.field .label { font-size: .8125rem; color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
+.field .num { font-size: 4.25rem; display: flex; align-items: baseline; gap: 8px; }
+.field .num .unit { font-size: 1rem; }
+.stage-title { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 24px; padding-bottom: 12px; }
+.stage-title h2 { padding: 0; font-size: clamp(2rem, 4vw, 3.25rem); line-height: 1; }
+.stage-title p { margin: 0; color: var(--muted); }
+.profile { position: relative; min-width: 0; }
+.profile svg { display: block; width: 100%; height: auto; overflow: visible; }
+.readout { min-height: 1.75rem; margin: 8px 0 0; color: var(--ink); font-size: .9375rem; }
+.readout span { color: var(--muted); }
+.clip-reveal { animation: reveal 1000ms cubic-bezier(.16, 1, .3, 1) both; }
+@keyframes reveal { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+
+/* zones */
+.zone-row { display: flex; width: 100%; gap: 2px; min-height: 112px; }
+.zone { display: flex; flex-direction: column; justify-content: space-between; padding: 10px 12px; color: var(--on-zone); min-width: 0; overflow: hidden; }
+.zone b { font: 700 1.75rem/1 var(--display); }
+.zone span { font-size: .875rem; font-weight: 600; white-space: nowrap; }
+.zone .min { font: 700 1.5rem/1 var(--display); }
+.zone-legend { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; margin-top: 8px; font-size: .8125rem; color: var(--muted); }
+.zone-legend div { padding-right: 8px; }
+
+/* overlay */
+.tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.chip { min-height: 44px; padding: 0 16px; background: transparent; border: 1px solid var(--rule-strong); border-radius: 0; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; }
+.chip[aria-pressed="true"] { background: var(--ground-2); border-color: var(--ink); box-shadow: inset 0 -3px 0 var(--ink); }
+.chip[aria-pressed="false"] { color: var(--muted); }
+.chip i { width: 22px; height: 4px; display: inline-block; }
+.chip:hover { border-color: var(--ink); }
+
+/* compare */
+.rides { list-style: none; margin: 0; padding: 0; }
+.ride { display: grid; grid-template-columns: 7.5rem 1fr 5.5rem 5.5rem 5rem; align-items: center; gap: 16px; border-top: 1px solid var(--rule); padding: 8px 0; width: 100%; background: none; border-left: 0; border-right: 0; border-bottom: 0; text-align: left; cursor: pointer; min-height: 56px; }
+.rides li:last-child .ride { border-bottom: 1px solid var(--rule); }
+.ride:hover { background: var(--ground-2); }
+.ride[aria-current="true"] { background: var(--ground-2); outline: 1px solid var(--flag); outline-offset: -1px; }
+.ride .d { font-weight: 600; }
+.ride .n { font: 600 1.5rem/1 var(--display); text-align: right; }
+.ride .n small { font: 400 .75rem var(--text); color: var(--muted); margin-left: 3px; }
+.ride svg { width: 100%; height: 44px; display: block; }
+.ride-head { display: grid; grid-template-columns: 7.5rem 1fr 5.5rem 5.5rem 5rem; gap: 16px; color: var(--muted); font-size: .8125rem; text-transform: uppercase; letter-spacing: .05em; padding-bottom: 6px; }
+.ride-head span:nth-child(n+3) { text-align: right; }
+
+/* fitness */
+.fitness { display: grid; grid-template-columns: 240px 1fr 300px; gap: 32px; align-items: start; }
+.vo2 .num { font-size: 6.5rem; display: block; }
+.vo2 .badge { display: inline-block; margin-top: 8px; padding: 2px 8px; border: 1px solid var(--flag); color: var(--flag); font-size: .8125rem; font-weight: 600; letter-spacing: .05em; }
+.method { margin: 12px 0 0; color: var(--muted); font-size: .875rem; max-width: 34ch; }
+.inputs { display: grid; gap: 12px; }
+.inputs label { display: grid; grid-template-columns: 1fr 96px; align-items: center; gap: 12px; font-size: .9375rem; }
+.inputs input { background: var(--ground-2); border: 1px solid var(--rule-strong); border-radius: 0; padding: 8px 10px; min-height: 44px; text-align: right; width: 100%; }
+.inputs small { color: var(--muted); grid-column: 1 / -1; margin-top: -6px; }
+.slot { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--rule); font-size: .875rem; color: var(--muted); }
+.slot code { font-family: var(--text); color: var(--ink); }
+
+footer { margin-top: 56px; border-top: 1px solid var(--rule); padding-top: 16px; color: var(--muted); font-size: .8125rem; max-width: 80ch; }
+
+text { font-family: var(--text); }
+.axis text { fill: var(--muted); font-size: 12px; }
+.axis line, .grid line { stroke: var(--rule); }
+
+@media (max-width: 1000px) {
+  .stage { grid-template-columns: 1fr; }
+  .fields { grid-template-columns: repeat(2, 1fr); gap: 0 24px; }
+  .field .num { font-size: 3.25rem; }
+  .fitness { grid-template-columns: 1fr; }
+  .ride, .ride-head { grid-template-columns: 6rem 1fr 4.5rem 4.5rem; }
+  .ride > :nth-child(5), .ride-head span:nth-child(5) { display: none; }
+}
+@media (max-width: 560px) {
+  .zone-row { flex-wrap: wrap; }
+  .zone { flex: 1 1 45% !important; min-height: 76px; }
+  .zone-legend { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .clip-reveal { animation: none; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>eBike Stage Log</h1>
+  <span class="pick"><label for="ridepick" class="unit">Stage</label><select id="ridepick"></select></span>
+  <span class="spacer"></span>
+  <span class="synthetic">SYNTHETIC SAMPLE DATA</span>
+</header>
+
+<main>
+  <section class="stage" aria-labelledby="stagetitle">
+    <div class="stage-title">
+      <h2 id="stagetitle">Stage</h2>
+      <p id="stagesub"></p>
+    </div>
+    <div class="fields" id="fields"></div>
+    <div class="profile">
+      <div id="profile"></div>
+      <p class="readout" id="readout" aria-live="off"></p>
+    </div>
+  </section>
+
+  <h2>Time in zone</h2>
+  <div class="zone-row" id="zones" role="img" aria-label="Time in power zones"></div>
+  <div class="zone-legend" id="zonelegend"></div>
+
+  <h2>Power against speed, cadence and battery</h2>
+  <div class="tools" id="tools" role="group" aria-label="Chart mode and series">
+    <button class="chip" id="modeBtn" aria-pressed="false">Overlay</button>
+    <button class="chip" data-s="power" aria-pressed="true"><i></i>Power</button>
+    <button class="chip" data-s="speed" aria-pressed="true"><i></i>Speed</button>
+    <button class="chip" data-s="cadence" aria-pressed="true"><i></i>Cadence</button>
+    <button class="chip" data-s="soc" aria-pressed="true"><i></i>Battery</button>
+  </div>
+  <div id="overlay"></div>
+
+  <h2>Stages compared</h2>
+  <div class="ride-head"><span>Date</span><span>Power profile</span><span>Avg</span><span>Max</span><span>Distance</span></div>
+  <ul class="rides" id="rides"></ul>
+
+  <h2>Fitness</h2>
+  <div class="fitness">
+    <div class="vo2">
+      <div class="label unit">VO2max, estimated</div>
+      <div class="num" id="vo2num">--</div>
+      <div class="unit">ml/kg/min</div>
+      <span class="badge">ESTIMATE, NOT MEASURED</span>
+      <p class="method" id="method"></p>
+    </div>
+    <div id="trend"></div>
+    <div>
+      <div class="inputs">
+        <label for="inWeight">Weight (kg)<input id="inWeight" type="number" min="30" max="200" step="0.5" value="61"></label>
+        <label for="inAge">Age<input id="inAge" type="number" min="16" max="100" value="67"></label>
+        <label for="inFtp">FTP (W)<input id="inFtp" type="number" min="40" max="500" value="150"></label>
+        <small>FTP is a placeholder until you set yours. It only moves the zone boundaries.</small>
+        <label for="inRest">Resting HR (bpm)<input id="inRest" type="number" min="30" max="120" value="58"></label>
+      </div>
+      <p class="slot">Watch slot: <code>sensor.xiaomi_watch_5_vo2max</code> is not connected. When it exists it replaces this estimate and this panel says so.</p>
+    </div>
+  </div>
+
+  <footer>Mockup with synthetic data for layout review. Entities used in the live build: sensor.ebike_rider_power, ebike_speed, ebike_cadence, ebike_battery_soc_live, last_ride_avg_power, last_ride_max_power, avg_power_all_rides. Power is the rider's own output, not motor assist.</footer>
+</main>
+
+<script>
+(() => {
+  const ZC = ["--z1", "--z2", "--z3", "--z4", "--z5"].map(v => getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+  const ZNAME = ["Recovery", "Endurance", "Tempo", "Threshold", "Surge"];
+  const state = { ride: 0, mode: "stacked", on: { power: true, speed: true, cadence: true, soc: true }, hover: null };
+  const $ = id => document.getElementById(id);
+  const num = (id) => parseFloat($(id).value) || 0;
+
+  // ---- synthetic data (seeded, so it is stable between reloads) ----
+  function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; };
+  const DATES = ["Sat 4 Oct", "Wed 1 Oct", "Sun 28 Sep", "Thu 25 Sep", "Sun 21 Sep", "Thu 18 Sep", "Sun 14 Sep", "Wed 10 Sep"];
+  const rides = DATES.map((date, k) => {
+    const r = rng(1000 + k * 77), n = 70 + Math.floor(r() * 90); // 30 s samples
+    const base = 96 + r() * 36, pts = [];
+    let km = 0, soc = 100, phase = r() * 6;
+    for (let i = 0; i < n; i++) {
+      const t = i * 0.5; // minutes
+      const climb = Math.max(0, Math.sin((i / n) * Math.PI * (2 + k % 3) + phase)) ** 2;
+      const p = Math.max(0, base * 0.7 + climb * (60 + r() * 55) + (r() - .5) * 38 + (i > n - 8 ? -30 : 0));
+      const v = Math.max(5, 14 + p * 0.065 - climb * 3 + (r() - .5) * 3);
+      const cad = Math.max(0, 62 + p * 0.1 + (r() - .5) * 8);
+      km += v * 0.5 / 60; soc -= 0.28 + p / 3200;
+      pts.push({ t, p: Math.round(p), v, cad, soc, km });
+    }
+    const dur = n * 0.5, avg = pts.reduce((s, q) => s + q.p, 0) / n, max = Math.max(...pts.map(q => q.p));
+    return { date, pts, dur, avg, max, km };
+  });
+  const allAvg = rides.reduce((s, r) => s + r.avg, 0) / rides.length;
+
+  const zoneOf = (p) => { const f = num("inFtp") || 1, x = p / f; return x < .55 ? 0 : x < .75 ? 1 : x < .9 ? 2 : x < 1.05 ? 3 : 4; };
+  const fmtT = m => { const h = Math.floor(m / 60), mm = Math.floor(m % 60); return h ? `${h}:${String(mm).padStart(2, "0")}` : `${mm} min`; };
+  const clock = m => `${Math.floor(m / 60)}:${String(Math.floor(m % 60)).padStart(2, "0")}:${String(Math.round((m % 1) * 60)).padStart(2, "0")}`;
+  const svgNS = (w, h, inner, label) => `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${label}">${inner}</svg>`;
+  const widthOf = el => Math.max(320, Math.floor(el.getBoundingClientRect().width));
+
+  function best5(pts) { // best rolling 5-minute mean power (10 samples)
+    let best = 0, s = 0;
+    for (let i = 0; i < pts.length; i++) { s += pts[i].p; if (i >= 10) s -= pts[i - 10].p; if (i >= 9) best = Math.max(best, s / 10); }
+    return best;
+  }
+  const vo2 = (r) => 10.8 * best5(r.pts) / (num("inWeight") || 1) + 7;
+
+  // ---- stage profile ----
+  function drawProfile() {
+    const r = rides[state.ride], host = $("profile"), W = widthOf(host), H = Math.round(Math.max(260, Math.min(380, W * 0.3)));
+    const L = 44, R = 12, T = 28, B = 34, iw = W - L - R, ih = H - T - B;
+    const ymax = Math.ceil((r.max + 20) / 50) * 50, X = t => L + t / r.dur * iw, Y = p => T + ih - p / ymax * ih;
+    let s = `<g class="grid axis">`;
+    for (let p = 0; p <= ymax; p += 50) s += `<line x1="${L}" x2="${W - R}" y1="${Y(p)}" y2="${Y(p)}"/><text x="${L - 8}" y="${Y(p) + 4}" text-anchor="end">${p}</text>`;
+    const step = (r.dur > 80 ? 20 : 10) * (W < 600 ? 2 : 1);
+    for (let t = 0; t <= r.dur; t += step) s += `<line x1="${X(t)}" x2="${X(t)}" y1="${T + ih}" y2="${T + ih + 6}"/><text x="${X(t)}" y="${H - 10}" text-anchor="middle">${t} min</text>`;
+    s += `</g><g class="clip-reveal">`;
+    r.pts.forEach((q, i) => {
+      const n = r.pts[i + 1] || q, x0 = X(q.t), x1 = X(n.t === q.t ? q.t + .5 : n.t);
+      s += `<polygon fill="${ZC[zoneOf((q.p + n.p) / 2)]}" stroke="${ZC[zoneOf((q.p + n.p) / 2)]}" stroke-width=".6" points="${x0},${T + ih} ${x0},${Y(q.p)} ${x1},${Y(n.p)} ${x1},${T + ih}"/>`;
+    });
+    s += `<polyline fill="none" stroke="#f2efe6" stroke-width="1.5" stroke-linejoin="round" points="${r.pts.map(q => `${X(q.t)},${Y(q.p)}`).join(" ")}"/>`;
+    // average line
+    s += `<line x1="${L}" x2="${W - R}" y1="${Y(r.avg)}" y2="${Y(r.avg)}" stroke="#f2efe6" stroke-width="1" stroke-dasharray="6 5"/>`;
+    s += `<text x="${W - R - 4}" y="${Y(r.avg) - 6}" text-anchor="end" fill="#f2efe6" font-size="13" font-weight="600">average ${Math.round(r.avg)} W</text>`;
+    // summit flag
+    const top = r.pts.reduce((a, b) => b.p > a.p ? b : a), fx = X(top.t), fy = Y(top.p), left = fx > W * .75;
+    s += `<line x1="${fx}" x2="${fx}" y1="${fy}" y2="${T - 18}" stroke="#ffd23f" stroke-width="2"/>`;
+    s += `<g transform="translate(${left ? fx - 128 : fx},${T - 24})"><rect width="128" height="26" fill="#ffd23f"/><text x="8" y="18" fill="#0f1b2d" font-size="14" font-weight="700">MAX ${top.p} W · ${clock(top.t).slice(0, -3)}</text></g>`;
+    s += `</g><line id="cross" x1="0" x2="0" y1="${T}" y2="${T + ih}" stroke="#ffd23f" stroke-width="1.5" visibility="hidden"/>`;
+    s += `<rect id="hit" x="${L}" y="${T}" width="${iw}" height="${ih}" fill="transparent" style="cursor:crosshair" tabindex="0" aria-label="Scrub the stage with arrow keys"/>`;
+    host.innerHTML = svgNS(W, H, s, `Power profile for ${r.date}, average ${Math.round(r.avg)} watts, maximum ${r.max} watts`);
+    const cross = host.querySelector("#cross"), hit = host.querySelector("#hit");
+    const show = (clientX) => {
+      const rc = hit.getBoundingClientRect(), f = Math.min(1, Math.max(0, (clientX - rc.left) / rc.width));
+      const i = Math.min(r.pts.length - 1, Math.round(f * (r.pts.length - 1))), q = r.pts[i];
+      state.hover = i; cross.setAttribute("x1", X(q.t)); cross.setAttribute("x2", X(q.t)); cross.setAttribute("visibility", "visible");
+      $("readout").innerHTML = `${clock(q.t)} <span>into the stage</span> &nbsp; <b>${q.p} W</b> <span>zone ${zoneOf(q.p) + 1}</span> &nbsp; ${q.v.toFixed(1)} <span>km/h</span> &nbsp; ${Math.round(q.cad)} <span>rpm</span> &nbsp; ${Math.round(q.soc)}<span>% battery</span>`;
+      drawOverlay();
+    };
+    hit.addEventListener("pointermove", e => show(e.clientX));
+    hit.addEventListener("pointerleave", () => { cross.setAttribute("visibility", "hidden"); $("readout").innerHTML = `<span>Move over the profile to read any moment.</span>`; state.hover = null; drawOverlay(); });
+    hit.addEventListener("keydown", e => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { const rc = hit.getBoundingClientRect(), i = (state.hover ?? 0) + (e.key === "ArrowRight" ? 1 : -1), c = Math.min(r.pts.length - 1, Math.max(0, i)); show(rc.left + c / (r.pts.length - 1) * rc.width); e.preventDefault(); } });
+    $("readout").innerHTML = `<span>Move over the profile to read any moment.</span>`;
+  }
+
+  function drawFields() {
+    const r = rides[state.ride], w = num("inWeight") || 1;
+    const f = (label, v, u) => `<div class="field"><div class="label">${label}</div><div class="num">${v}<span class="unit">${u}</span></div></div>`;
+    $("fields").innerHTML = f("Average power", Math.round(r.avg), "W") + f("Maximum power", r.max, "W") + f("Average per kg", (r.avg / w).toFixed(2), "W/kg") + f("Moving time", fmtT(r.dur).replace(" min", ""), r.dur < 60 ? "min" : "h:min");
+    $("stagetitle").textContent = r.date;
+    $("stagesub").textContent = `${r.km.toFixed(1)} km · ${fmtT(r.dur)} · ${(r.avg - allAvg >= 0 ? "+" : "")}${Math.round(r.avg - allAvg)} W against your all-rides average of ${Math.round(allAvg)} W`;
+  }
+
+  function drawZones() {
+    const r = rides[state.ride], mins = [0, 0, 0, 0, 0];
+    r.pts.forEach(q => mins[zoneOf(q.p)] += .5);
+    const f = num("inFtp");
+    $("zones").innerHTML = mins.map((m, i) => m > 0 ? `<div class="zone" style="background:${ZC[i]};flex:${m} 1 0"><b>Z${i + 1}</b><span class="min">${Math.round(m)} min</span><span>${Math.round(m / r.dur * 100)}%</span></div>` : "").join("");
+    const b = [0, .55, .75, .9, 1.05];
+    $("zonelegend").innerHTML = b.map((x, i) => `<div><b style="color:var(--ink)">Z${i + 1} ${ZNAME[i]}</b><br>${i === 4 ? `over ${Math.round(f * 1.05)} W` : i === 0 ? `under ${Math.round(f * .55)} W` : `${Math.round(f * x)}–${Math.round(f * b[i + 1])} W`}</div>`).join("");
+  }
+
+  // ---- overlay / stacked ----
+  const SER = { power: ["Power", "W", q => q.p, "#f2efe6", ""], speed: ["Speed", "km/h", q => q.v, "#8ab17d", "8 4"], cadence: ["Cadence", "rpm", q => q.cad, "#f4a259", "2 4"], soc: ["Battery", "%", q => q.soc, "#78c2ff", "12 3 2 3"] };
+  function drawOverlay() {
+    const r = rides[state.ride], host = $("overlay"), W = widthOf(host), keys = Object.keys(SER).filter(k => state.on[k]);
+    if (!keys.length) { host.innerHTML = `<p class="unit">Turn on at least one series.</p>`; return; }
+    const L = 44, R = 12, iw = W - L - R, X = t => L + t / r.dur * iw;
+    const range = k => { const v = r.pts.map(SER[k][2]); return [Math.min(...v), Math.max(...v)]; };
+    const lineFor = (k, y0, h, norm) => { const [lo, hi] = range(k); const Y = v => y0 + h - ((v - (norm ? lo : lo)) / ((hi - lo) || 1)) * h; return r.pts.map(q => `${X(q.t)},${Y(SER[k][2](q))}`).join(" "); };
+    let s = "", H;
+    if (state.mode === "overlay") {
+      H = 320; const T = 12, ih = H - T - 30;
+      s += `<g class="grid axis">${[0, .25, .5, .75, 1].map(f => `<line x1="${L}" x2="${W - R}" y1="${T + ih * (1 - f)}" y2="${T + ih * (1 - f)}"/><text x="${L - 8}" y="${T + ih * (1 - f) + 4}" text-anchor="end">${Math.round(f * 100)}%</text>`).join("")}</g>`;
+      keys.forEach(k => s += `<polyline fill="none" stroke="${SER[k][3]}" stroke-width="2" stroke-dasharray="${SER[k][4]}" stroke-linejoin="round" points="${lineFor(k, T, ih, true)}"/>`);
+      s += `<text x="${L}" y="${H - 6}" class="axis" fill="#a3b4cc" font-size="12">Each series is scaled to its own minimum and maximum so shapes can be compared.</text>`;
+    } else {
+      const sh = 92, gap = 14; H = keys.length * (sh + gap) + 30;
+      keys.forEach((k, i) => {
+        const y0 = i * (sh + gap) + 6, [lo, hi] = range(k);
+        s += `<g class="grid axis"><line x1="${L}" x2="${W - R}" y1="${y0}" y2="${y0}"/><line x1="${L}" x2="${W - R}" y1="${y0 + sh}" y2="${y0 + sh}"/><text x="${L - 8}" y="${y0 + 10}" text-anchor="end">${Math.round(hi)}</text><text x="${L - 8}" y="${y0 + sh}" text-anchor="end">${Math.round(lo)}</text></g>`;
+        s += `<text x="${L + 6}" y="${y0 + 16}" fill="${SER[k][3]}" font-size="13" font-weight="600">${SER[k][0]} (${SER[k][1]})</text>`;
+        s += `<polyline fill="none" stroke="${SER[k][3]}" stroke-width="2" stroke-dasharray="${SER[k][4]}" stroke-linejoin="round" points="${lineFor(k, y0 + 22, sh - 26, false)}"/>`;
+      });
+    }
+    const xs = (r.dur > 80 ? 20 : 10) * (W < 600 ? 2 : 1); let ax = `<g class="axis">`;
+    for (let t = 0; t <= r.dur; t += xs) ax += `<text x="${X(t)}" y="${H - (state.mode === "overlay" ? 18 : 4)}" text-anchor="middle">${t} min</text>`;
+    s += ax + `</g>`;
+    if (state.hover != null) { const q = r.pts[state.hover]; s += `<line x1="${X(q.t)}" x2="${X(q.t)}" y1="0" y2="${H - 24}" stroke="#ffd23f" stroke-width="1.5"/>`; }
+    host.innerHTML = svgNS(W, H, s, "Power, speed, cadence and battery over the stage");
+  }
+
+  // ---- compare ----
+  function drawRides() {
+    $("rides").innerHTML = rides.map((r, i) => {
+      const w = 420, h = 44, mx = Math.max(...rides.map(x => x.max)), X = t => t / 110 * w, Y = p => h - p / mx * (h - 2);
+      const poly = `${X(0)},${h} ` + r.pts.map(q => `${X(q.t)},${Y(q.p)}`).join(" ") + ` ${X(r.dur)},${h}`;
+      const avgY = Y(allAvg);
+      return `<li><button class="ride" data-i="${i}" ${i === state.ride ? 'aria-current="true"' : ""} aria-label="${r.date}, average ${Math.round(r.avg)} watts, maximum ${r.max} watts, ${r.km.toFixed(1)} kilometres">
+        <span class="d">${r.date}</span>
+        <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><polygon points="${poly}" fill="${i === state.ride ? "#ffd23f" : "#a3b4cc"}" opacity="${i === state.ride ? 1 : .7}"/><line x1="0" x2="${w}" y1="${avgY}" y2="${avgY}" stroke="#f2efe6" stroke-dasharray="4 4" stroke-width="1"/></svg>
+        <span class="n">${Math.round(r.avg)}<small>W</small></span><span class="n">${r.max}<small>W</small></span><span class="n">${r.km.toFixed(0)}<small>km</small></span></button></li>`;
+    }).join("");
+  }
+
+  // ---- fitness ----
+  function drawFitness() {
+    const r = rides[state.ride], v = vo2(r), age = num("inAge"), hrmax = 208 - 0.7 * age, rest = num("inRest");
+    $("vo2num").textContent = v.toFixed(0);
+    $("method").textContent = `Power method: 10.8 × best 5-min rider power (${Math.round(best5(r.pts))} W) ÷ ${num("inWeight")} kg + 7. Cross-check from heart rate (Uth, max ${Math.round(hrmax)} bpm, rest ${rest}): ${(15.3 * hrmax / rest).toFixed(0)}. Treat both as rough guides.`;
+    const host = $("trend"), W = widthOf(host), H = 220, L = 36, R = 12, T = 14, B = 28, iw = W - L - R, ih = H - T - B;
+    const series = rides.slice().reverse().map(x => vo2(x)), lo = Math.floor(Math.min(...series) - 2), hi = Math.ceil(Math.max(...series) + 2);
+    const X = i => L + i / (series.length - 1) * iw, Y = val => T + ih - (val - lo) / (hi - lo) * ih;
+    let s = `<g class="grid axis">${[lo, (lo + hi) / 2, hi].map(g => `<line x1="${L}" x2="${W - R}" y1="${Y(g)}" y2="${Y(g)}"/><text x="${L - 8}" y="${Y(g) + 4}" text-anchor="end">${Math.round(g)}</text>`).join("")}</g>`;
+    s += `<polyline fill="none" stroke="#ffd23f" stroke-width="2.5" stroke-linejoin="round" points="${series.map((val, i) => `${X(i)},${Y(val)}`).join(" ")}"/>`;
+    series.forEach((val, i) => s += `<circle cx="${X(i)}" cy="${Y(val)}" r="${i === series.length - 1 - state.ride ? 6 : 3.5}" fill="#0f1b2d" stroke="#ffd23f" stroke-width="2"/>`);
+    s += `<g class="axis">${DATES.slice().reverse().map((d, i) => i % 2 === 0 ? `<text x="${X(i)}" y="${H - 8}" text-anchor="middle">${d.split(" ").slice(1).join(" ")}</text>` : "").join("")}</g>`;
+    host.innerHTML = svgNS(W, H, s, "Estimated VO2max for each of the last eight stages");
+  }
+
+  // ---- wiring ----
+  function renderAll() { drawFields(); drawProfile(); drawZones(); drawOverlay(); drawRides(); drawFitness(); }
+  $("ridepick").innerHTML = rides.map((r, i) => `<option value="${i}">${r.date}</option>`).join("");
+  $("ridepick").addEventListener("change", e => { state.ride = +e.target.value; renderAll(); });
+  $("rides").addEventListener("click", e => { const b = e.target.closest(".ride"); if (b) { state.ride = +b.dataset.i; $("ridepick").value = state.ride; renderAll(); } });
+  $("modeBtn").addEventListener("click", e => { state.mode = state.mode === "stacked" ? "overlay" : "stacked"; e.target.setAttribute("aria-pressed", state.mode === "overlay"); e.target.textContent = state.mode === "overlay" ? "Stacked" : "Overlay"; drawOverlay(); });
+  $("tools").querySelectorAll("[data-s]").forEach(b => { b.querySelector("i").style.background = SER[b.dataset.s][3]; b.addEventListener("click", () => { const k = b.dataset.s; state.on[k] = !state.on[k]; b.setAttribute("aria-pressed", state.on[k]); drawOverlay(); }); });
+  ["inWeight", "inAge", "inFtp", "inRest"].forEach(id => $(id).addEventListener("input", () => { drawFields(); drawZones(); drawProfile(); drawRides(); drawFitness(); }));
+  let t; new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => { drawProfile(); drawOverlay(); drawFitness(); }, 80); }).observe(document.body);
+  renderAll();
+})();
+</script>
+</body>
+</html>

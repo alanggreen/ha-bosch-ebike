@@ -1,0 +1,32 @@
+# Put in /config/themes/ebike.yaml with
+#   frontend:
+#     themes: !include_dir_merge_named themes
+# Two themes: "Ebike Stage" (dark navy, evening review) and "Ebike Live"
+# (light paper white, readable in sunlight on a handlebar-mounted phone).
+Ebike Stage:
+  primary-background-color: "#0f1b2d"
+  secondary-background-color: "#16263d"
+  card-background-color: "#0f1b2d"
+  primary-text-color: "#f2efe6"
+  secondary-text-color: "#a3b4cc"
+  divider-color: "rgba(242,239,230,0.2)"
+  primary-color: "#ffd23f"
+  text-primary-color: "#0f1b2d"
+  ha-card-border-radius: "0px"
+  ha-card-box-shadow: "none"
+  ha-card-border-width: "0px"
+  paper-font-common-base_-_font-family: '"Barlow", system-ui, sans-serif'
+
+Ebike Live:
+  primary-background-color: "#edf1f5"
+  secondary-background-color: "#e0e6ee"
+  card-background-color: "#edf1f5"
+  primary-text-color: "#0f1b2d"
+  secondary-text-color: "#3d4b61"
+  divider-color: "rgba(15,27,45,0.28)"
+  primary-color: "#0f1b2d"
+  text-primary-color: "#edf1f5"
+  ha-card-border-radius: "0px"
+  ha-card-box-shadow: "none"
+  ha-card-border-width: "0px"
+  paper-font-common-base_-_font-family: '"Barlow", system-ui, sans-serif'

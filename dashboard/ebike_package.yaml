@@ -1,0 +1,190 @@
+# Home Assistant package for the eBike Stage dashboard.
+#
+# Put this file in /config/packages/ebike_package.yaml and make sure
+# configuration.yaml has:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# It creates: the rider profile helpers (weight, age, FTP, resting HR), the
+# power zone, the rolling and weekly best 5-minute power, the VO2max estimate,
+# time-in-zone for today, and the bridge's SD-card backlog sensors.
+#
+# Sensor names assume the ESP bridge entities are called sensor.BRIDGE_ebike_rider_power
+# etc. (see esphome/example-bridge-mobile.yaml). Change them here if yours differ.
+
+input_number:
+  ebike_rider_weight:
+    name: Rider weight
+    min: 30
+    max: 200
+    step: 0.5
+    initial: 61
+    unit_of_measurement: kg
+    mode: box
+  ebike_rider_age:
+    name: Rider age
+    min: 16
+    max: 100
+    step: 1
+    initial: 67
+    unit_of_measurement: years
+    mode: box
+  ebike_rider_ftp:
+    name: Rider FTP (placeholder until you measure it)
+    min: 40
+    max: 500
+    step: 1
+    initial: 150
+    unit_of_measurement: W
+    mode: box
+  ebike_rider_rest_hr:
+    name: Rider resting heart rate
+    min: 30
+    max: 120
+    step: 1
+    initial: 58
+    unit_of_measurement: bpm
+    mode: box
+
+sensor:
+  # Rolling 5-minute mean of rider power.
+  - platform: statistics
+    name: eBike Power 5 min
+    unique_id: ebike_power_5min
+    entity_id: sensor.BRIDGE_ebike_rider_power
+    state_characteristic: mean
+    max_age:
+      minutes: 5
+    sampling_size: 600
+    precision: 0
+
+  # Time spent in each power zone today (hours; the dashboard shows minutes).
+  - platform: history_stats
+    name: eBike Zone 1 Today
+    unique_id: ebike_zone_1_today
+    entity_id: sensor.ebike_power_zone
+    state: "1"
+    type: time
+    start: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
+    end: "{{ now() }}"
+  - platform: history_stats
+    name: eBike Zone 2 Today
+    unique_id: ebike_zone_2_today
+    entity_id: sensor.ebike_power_zone
+    state: "2"
+    type: time
+    start: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
+    end: "{{ now() }}"
+  - platform: history_stats
+    name: eBike Zone 3 Today
+    unique_id: ebike_zone_3_today
+    entity_id: sensor.ebike_power_zone
+    state: "3"
+    type: time
+    start: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
+    end: "{{ now() }}"
+  - platform: history_stats
+    name: eBike Zone 4 Today
+    unique_id: ebike_zone_4_today
+    entity_id: sensor.ebike_power_zone
+    state: "4"
+    type: time
+    start: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
+    end: "{{ now() }}"
+  - platform: history_stats
+    name: eBike Zone 5 Today
+    unique_id: ebike_zone_5_today
+    entity_id: sensor.ebike_power_zone
+    state: "5"
+    type: time
+    start: "{{ now().replace(hour=0, minute=0, second=0, microsecond=0) }}"
+    end: "{{ now() }}"
+
+template:
+  # Zone 1-5 from live rider power and FTP (55 / 75 / 90 / 105 % of FTP).
+  - sensor:
+      - name: eBike Power Zone
+        unique_id: ebike_power_zone
+        state: >
+          {% set p = states('sensor.BRIDGE_ebike_rider_power') | float(none) %}
+          {% set f = states('input_number.ebike_rider_ftp') | float(150) %}
+          {% if p is none %}unknown{% else %}
+          {% set x = p / f %}
+          {{ 1 if x < 0.55 else 2 if x < 0.75 else 3 if x < 0.90 else 4 if x < 1.05 else 5 }}
+          {% endif %}
+
+  # Best 5-minute rider power of the week. Only counts once the 5-minute
+  # window is (almost) full, so the first seconds of a ride cannot inflate it.
+  - trigger:
+      - platform: state
+        entity_id: sensor.ebike_power_5min
+      - platform: time
+        at: "00:00:00"
+    sensor:
+      - name: eBike Best 5 min Power
+        unique_id: ebike_best_5min_power
+        unit_of_measurement: W
+        device_class: power
+        state_class: measurement
+        state: >
+          {% set best = this.state | float(0) %}
+          {% if trigger.platform == 'time' %}
+            {{ 0 if now().weekday() == 0 else best | round(0) }}
+          {% else %}
+            {% set cur = states('sensor.ebike_power_5min') | float(0) %}
+            {% set cov = state_attr('sensor.ebike_power_5min', 'age_coverage_ratio') | float(0) %}
+            {{ ([cur, best] | max | round(0)) if cov >= 0.95 else best | round(0) }}
+          {% endif %}
+
+  # VO2max ESTIMATE. A watch-provided sensor wins if it exists; otherwise
+  # 10.8 x (best 5-min rider W / kg) + 7 (ACSM cycling equation). This is a
+  # rough guide, not a measurement.
+  - sensor:
+      - name: eBike VO2max Estimate
+        unique_id: ebike_vo2max_estimate
+        unit_of_measurement: ml/kg/min
+        state_class: measurement
+        state: >
+          {% set watch = states('sensor.xiaomi_watch_5_vo2max') %}
+          {% set b = states('sensor.ebike_best_5_min_power') | float(0) %}
+          {% set w = states('input_number.ebike_rider_weight') | float(0) %}
+          {% if watch | is_number %}{{ watch | float | round(1) }}
+          {% elif b > 0 and w > 0 %}{{ (10.8 * b / w + 7) | round(1) }}
+          {% else %}unavailable{% endif %}
+        attributes:
+          source: >
+            {{ 'watch' if states('sensor.xiaomi_watch_5_vo2max') | is_number else 'estimate from power' }}
+          hr_max_tanaka: >
+            {{ (208 - 0.7 * states('input_number.ebike_rider_age') | float(0)) | round(0) }}
+          vo2max_from_hr_uth: >
+            {% set rest = states('input_number.ebike_rider_rest_hr') | float(0) %}
+            {% set hrmax = 208 - 0.7 * states('input_number.ebike_rider_age') | float(0) %}
+            {{ (15.3 * hrmax / rest) | round(1) if rest > 0 else none }}
+
+      - name: eBike Last Ride Power per kg
+        unique_id: ebike_last_ride_w_per_kg
+        unit_of_measurement: W/kg
+        state_class: measurement
+        # Replace BIKE with your bike's entity prefix, as in ebike-dashboard.yaml.
+        state: >
+          {% set p = states('sensor.BIKE_last_ride_avg_power') | float(0) %}
+          {% set w = states('input_number.ebike_rider_weight') | float(0) %}
+          {{ (p / w) | round(2) if p > 0 and w > 0 else 'unavailable' }}
+
+# SD-card buffer status published by the ESP bridge (ride_data_logger) every 30 s.
+# Topic is <esphome node name>/ride_log/status.
+mqtt:
+  sensor:
+    - name: eBike Log Waiting to Upload
+      unique_id: ebike_log_unacked
+      state_topic: "ebike-bridge-mobile/ride_log/status"
+      value_template: "{{ value_json.unacked }}"
+      unit_of_measurement: records
+      state_class: measurement
+    - name: eBike Log Samples Lost
+      unique_id: ebike_log_dropped
+      state_topic: "ebike-bridge-mobile/ride_log/status"
+      value_template: "{{ value_json.dropped }}"
+      unit_of_measurement: records
+      state_class: measurement

@@ -1,4 +1,10 @@
-# Mobile / roaming Bosch eBike LDI bridge: MQTT + multi-WiFi + WireGuard.
+# HOME-ONLY variant of example-bridge-mobile.yaml: MQTT over your normal WiFi,
+# NO WireGuard (so none of the wg_* secrets are needed), with the SD-card
+# ride_data_logger. Use it to get the bridge working first; switch to
+# example-bridge-mobile.yaml when you want to roam via a phone hotspot.
+# Loads the components from the local ./components folder (this repo's copy).
+#
+# (Original header of the mobile file follows.)
 #
 # This is an ADDITION to the standard example-bridge.yaml (which uses the
 # native API). Use this variant only if you want to take the bridge ALONG on
@@ -69,7 +75,6 @@ logger:
   level: INFO
   logs:
     bosch_ebike_ldi: INFO
-    wireguard: INFO
     mqtt: INFO
 
 ota:
@@ -118,59 +123,13 @@ web_server:
   port: 80
   version: 3
 
-# WireGuard requires a time source.
+# Time source (stamps buffered ride samples).
 time:
   - platform: sntp
     id: sntp_time
     servers:
       - 0.pool.ntp.org
       - 1.pool.ntp.org
-
-# --- WireGuard tunnel back to the home network ------------------------------
-# All values come from the WireGuard connection you create in your router
-# (e.g. a FritzBox). See MOBILE.md for the step-by-step and where each value
-# maps to. Pitfalls we hit (already handled here):
-#   - `address` MUST equal the IP the router assigned to this peer.
-#   - `netmask: 255.255.255.0` is what actually routes the home subnet
-#     through the tunnel (do not omit it).
-#   - `require_connection_to_proceed: false` is required, because at home we
-#     disable the tunnel (see below); requiring it would block startup.
-wireguard:
-  id: wg_tunnel
-  address: !secret wg_address
-  netmask: 255.255.255.0
-  private_key: !secret wg_private_key
-  peer_endpoint: !secret wg_endpoint
-  peer_port: !secret wg_port
-  peer_public_key: !secret wg_peer_public_key
-  peer_preshared_key: !secret wg_preshared_key
-  peer_allowed_ips:
-    - !secret wg_allowed_subnet
-  peer_persistent_keepalive: 25s
-  reboot_timeout: 0s
-  require_connection_to_proceed: false
-
-# Turn the tunnel ON only on the phone hotspot, and OFF at home. At home the
-# router assigns the peer an IP inside the home subnet, so an active tunnel
-# there would create a routing conflict.
-text_sensor:
-  - platform: wifi_info
-    ssid:
-      name: "WLAN SSID"
-      id: current_ssid
-      on_value:
-        then:
-          - if:
-              condition:
-                lambda: 'return x == "${hotspot_ssid}";'
-              then:
-                - logger.log: "Hotspot detected -> enabling WireGuard"
-                - wireguard.enable:
-                    id: wg_tunnel
-              else:
-                - logger.log: "Home network detected -> disabling WireGuard"
-                - wireguard.disable:
-                    id: wg_tunnel
 
 external_components:
   - source:
@@ -337,10 +296,6 @@ sensor:
       return mins;
 
 binary_sensor:
-  - platform: wireguard
-    status:
-      name: "WireGuard Status"
-      id: wg_status
   - platform: bosch_ebike_ldi
     bosch_ebike_ldi_id: ebike_bridge
     connected:

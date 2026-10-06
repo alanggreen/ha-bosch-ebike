@@ -43,13 +43,28 @@ from .const import (
     CONF_BES2_PART,
 )
 from .coordinator import BoschEBikeCoordinator
+from .offline_backfill import (
+    CONF_OFFLINE_BACKFILL,
+    OFFLINE_BACKFILL_SCHEMA,
+    async_setup_offline_backfill,
+)
 from .profile_extra import bike_label as _bike_label
 
 _LOGGER = logging.getLogger(__name__)
 
-# This integration is configured exclusively via the UI (config entries),
-# never via YAML — declare that so hassfest is satisfied.
-CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+# This integration is configured via the UI (config entries). The single
+# exception is the optional, opt-in `offline_backfill` block that receives the
+# ESP bridge's SD-card-buffered ride data (see esphome/RIDE_LOGGING.md). It is
+# YAML because it is a global listener, not per account/bike, and because the
+# options flow rewrites the whole options dict on save.
+CONFIG_SCHEMA = vol.Schema(
+    {
+        DOMAIN: vol.Schema(
+            {vol.Optional(CONF_OFFLINE_BACKFILL): OFFLINE_BACKFILL_SCHEMA}
+        )
+    },
+    extra=vol.ALLOW_EXTRA,
+)
 
 PLATFORMS = [
     Platform.SENSOR,
@@ -210,6 +225,12 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         )
 
     _register_services(hass)
+
+    backfill_conf = (config.get(DOMAIN) or {}).get(CONF_OFFLINE_BACKFILL)
+    if backfill_conf is not None and "offline_backfill" not in domain_data:
+        domain_data["offline_backfill"] = await async_setup_offline_backfill(
+            hass, backfill_conf
+        )
 
     # Serve the whole www directory, not just the single card file: the card
     # is loaded as an ES module and now imports siblings from the same folder

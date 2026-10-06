@@ -1,7 +1,7 @@
 {
   "domain": "ha_bosch_ebike",
   "name": "Bosch eBike (Smart System & eBike System 2)",
-  "after_dependencies": ["lovelace", "recorder"],
+  "after_dependencies": ["lovelace", "mqtt", "recorder"],
   "codeowners": ["@Xunil99"],
   "config_flow": true,
   "dependencies": ["http", "websocket_api"],

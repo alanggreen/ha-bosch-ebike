@@ -1,0 +1,500 @@
+# eBike Stage dashboard (Home Assistant, YAML mode).
+#
+# Requires (HACS frontend): apexcharts-card, button-card.
+# Requires: this repo's ha_bosch_ebike integration (its cards load automatically),
+#           dashboard/ebike_package.yaml and dashboard/themes/ebike.yaml installed.
+#
+# BEFORE USE replace two tokens in this file and ebike_package.yaml:
+#   BIKE_   -> prefix of the Bosch integration sensors, e.g. sensor.my_ebike_last_ride_avg_power -> my_ebike_
+#   BRIDGE_ -> prefix of the ESP bridge sensors, e.g. sensor.ebike_bridge_mobile_ebike_speed -> ebike_bridge_mobile_
+#   sed -i 's/BIKE_/my_ebike_/g; s/BRIDGE_/ebike_bridge_mobile_/g' ebike-dashboard.yaml ebike_package.yaml
+#
+# Add it in configuration.yaml:
+#   lovelace:
+#     dashboards:
+#       dashboard-ebike-stage:
+#         mode: yaml
+#         title: eBike
+#         icon: mdi:bicycle-electric
+#         show_in_sidebar: true
+#         filename: dashboards/ebike-dashboard.yaml
+#     resources:
+#       - url: https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap
+#         type: css
+
+title: eBike
+
+button_card_templates:
+  # A ruled numeral field: small caps label above a big condensed number.
+  ebike_field:
+    show_icon: false
+    show_name: true
+    show_state: true
+    tap_action:
+      action: more-info
+    styles:
+      card:
+        - background: transparent
+        - box-shadow: none
+        - border-radius: 0
+        - border: none
+        - border-top: 2px solid var(--primary-text-color)
+        - padding: 8px 0 14px 0
+      grid:
+        - grid-template-areas: '"n" "s"'
+        - grid-template-rows: auto auto
+      name:
+        - justify-self: start
+        - font-size: 13px
+        - font-weight: 600
+        - letter-spacing: 0.05em
+        - text-transform: uppercase
+        - color: var(--secondary-text-color)
+      state:
+        - justify-self: start
+        - font-family: '"Barlow Condensed", "Arial Narrow", sans-serif'
+        - font-weight: 700
+        - font-size: 56px
+        - line-height: 1
+
+views:
+  # ------------------------------------------------------------------ LIVE
+  # Phone view for the handlebar: live numbers only, no analysis.
+  - title: Live
+    path: live
+    icon: mdi:speedometer
+    theme: Ebike Live
+    panel: false
+    cards:
+      - type: vertical-stack
+        cards:
+          - type: custom:button-card
+            entity: sensor.BRIDGE_ebike_rider_power
+            name: Rider power
+            show_name: true
+            show_state: true
+            show_icon: false
+            show_units: false
+            state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' W'; ]]]"
+            tap_action:
+              action: more-info
+            triggers_update: all
+            styles:
+              card:
+                - background: transparent
+                - box-shadow: none
+                - border: none
+                - border-radius: 0
+                - padding: 12px 0 8px 0
+              grid:
+                - grid-template-areas: '"n" "s" "zones"'
+                - grid-template-rows: auto auto auto
+              name:
+                - justify-self: start
+                - font-size: 15px
+                - font-weight: 600
+                - letter-spacing: 0.05em
+                - text-transform: uppercase
+                - color: var(--secondary-text-color)
+              state:
+                - justify-self: start
+                - font-family: '"Barlow Condensed", "Arial Narrow", sans-serif'
+                - font-weight: 700
+                - font-size: 150px
+                - line-height: 1
+                - background: var(--primary-text-color)
+                - color: var(--card-background-color)
+                - padding: 0 18px
+                - margin: 6px 0 12px 0
+              custom_fields:
+                zones:
+                  - justify-self: stretch
+            custom_fields:
+              zones: >
+                [[[
+                  const z = parseInt((states['sensor.ebike_power_zone'] || {}).state) || 0;
+                  const c = ['#2a9d8f', '#8ab17d', '#ffd23f', '#f4a259', '#ef6a43'];
+                  const n = ['Recovery', 'Endurance', 'Tempo', 'Threshold', 'Surge'];
+                  const boxes = c.map((col, i) => {
+                    const on = i + 1 === z;
+                    return `<div style="background:${col};height:${on ? 56 : 40}px;opacity:${on ? 1 : 0.35};display:grid;place-items:center;font:700 20px 'Barlow Condensed',sans-serif;color:#0f1b2d;border:2px solid ${on ? '#0f1b2d' : 'transparent'}">${i + 1}</div>`;
+                  }).join('');
+                  return `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;align-items:end">${boxes}</div><div style="margin-top:8px;font-weight:600">${z ? 'Zone ' + z + ', ' + n[z - 1] : ''}</div>`;
+                ]]]
+          - type: horizontal-stack
+            cards:
+              - type: custom:button-card
+                template: ebike_field
+                entity: sensor.BRIDGE_ebike_speed
+                name: Speed
+                state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : parseFloat(entity.state).toFixed(1) + ' km/h'; ]]]"
+              - type: custom:button-card
+                template: ebike_field
+                entity: sensor.BRIDGE_ebike_cadence
+                name: Cadence
+                state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' rpm'; ]]]"
+          - type: custom:button-card
+            template: ebike_field
+            entity: sensor.BRIDGE_ebike_battery_soc_live
+            name: Battery
+            state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' %'; ]]]"
+          - type: entities
+            show_header_toggle: false
+            entities:
+              - entity: binary_sensor.BRIDGE_ebike_connected
+                name: Bike linked
+              - entity: sensor.ebike_log_waiting_to_upload
+                name: Waiting to upload from card
+              - entity: sensor.ebike_log_samples_lost
+                name: Samples lost (card full)
+
+  # -------------------------------------------------------------- ANALYSIS
+  # Desktop / tablet view for reviewing a ride afterwards.
+  - title: Analysis
+    path: analysis
+    icon: mdi:chart-areaspline
+    theme: Ebike Stage
+    cards:
+      - type: markdown
+        content: "## Stage profile"
+      # Last ride's power as a stage profile, line and fill coloured by zone
+      # (boundaries here are for FTP 150 W: 83 / 113 / 135 / 158 W; edit the
+      # thresholds if you change FTP). Change graph_span to cover your ride.
+      - type: custom:apexcharts-card
+        graph_span: 3h
+        span:
+          end: minute
+        experimental:
+          color_threshold: true
+        header:
+          show: true
+          title: Rider power
+          show_states: true
+          colorize_states: true
+        yaxis:
+          - min: 0
+            decimals: 0
+        series:
+          - entity: sensor.BRIDGE_ebike_rider_power
+            name: Power
+            type: area
+            curve: stepline
+            stroke_width: 1
+            opacity: 1
+            color_threshold:
+              - value: 0
+                color: "#2a9d8f"
+              - value: 83
+                color: "#8ab17d"
+              - value: 113
+                color: "#ffd23f"
+              - value: 135
+                color: "#f4a259"
+              - value: 158
+                color: "#ef6a43"
+            extend_to: now
+            show:
+              extremas: true
+              legend_value: false
+        apex_config:
+          theme:
+            mode: dark
+          chart:
+            height: 340
+            background: transparent
+          grid:
+            borderColor: "rgba(242,239,230,0.2)"
+          fill:
+            opacity: 1
+          annotations:
+            yaxis:
+              - y: 150
+                borderColor: "#f2efe6"
+                strokeDashArray: 5
+                label:
+                  text: FTP
+                  style:
+                    background: "#f2efe6"
+                    color: "#0f1b2d"
+      - type: grid
+        columns: 4
+        square: false
+        cards:
+          - type: custom:button-card
+            template: ebike_field
+            entity: sensor.BIKE_last_ride_avg_power
+            name: Last ride, average power
+            state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' W'; ]]]"
+          - type: custom:button-card
+            template: ebike_field
+            entity: sensor.BIKE_last_ride_max_power
+            name: Last ride, maximum power
+            state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' W'; ]]]"
+          - type: custom:button-card
+            template: ebike_field
+            entity: sensor.ebike_last_ride_power_per_kg
+            name: Average per kg
+            state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : parseFloat(entity.state).toFixed(2) + ' W/kg'; ]]]"
+          - type: custom:button-card
+            template: ebike_field
+            entity: sensor.BIKE_avg_power_all_rides
+            name: Average, all rides
+            state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' W'; ]]]"
+
+      - type: markdown
+        content: "## Time in zone, today"
+      - type: custom:apexcharts-card
+        chart_type: bar
+        graph_span: 1d
+        header:
+          show: false
+        series:
+          - entity: sensor.ebike_zone_1_today
+            name: Z1 Recovery
+            color: "#2a9d8f"
+            transform: "return x * 60;"
+            group_by: { func: last, duration: 1d }
+          - entity: sensor.ebike_zone_2_today
+            name: Z2 Endurance
+            color: "#8ab17d"
+            transform: "return x * 60;"
+            group_by: { func: last, duration: 1d }
+          - entity: sensor.ebike_zone_3_today
+            name: Z3 Tempo
+            color: "#ffd23f"
+            transform: "return x * 60;"
+            group_by: { func: last, duration: 1d }
+          - entity: sensor.ebike_zone_4_today
+            name: Z4 Threshold
+            color: "#f4a259"
+            transform: "return x * 60;"
+            group_by: { func: last, duration: 1d }
+          - entity: sensor.ebike_zone_5_today
+            name: Z5 Surge
+            color: "#ef6a43"
+            transform: "return x * 60;"
+            group_by: { func: last, duration: 1d }
+        apex_config:
+          theme:
+            mode: dark
+          chart:
+            height: 160
+            stacked: true
+            background: transparent
+          plotOptions:
+            bar:
+              horizontal: true
+          yaxis:
+            show: false
+          dataLabels:
+            enabled: true
+            formatter: "function (v) { return v >= 1 ? Math.round(v) + ' min' : ''; }"
+          legend:
+            position: bottom
+
+      - type: markdown
+        content: "## Power against speed, cadence and battery"
+      # Tap a legend entry to hide or show that series.
+      - type: custom:apexcharts-card
+        graph_span: 3h
+        span:
+          end: minute
+        header:
+          show: false
+        yaxis:
+          - id: power
+            min: 0
+            decimals: 0
+          - id: speed
+            opposite: true
+            min: 0
+            decimals: 0
+          - id: cadence
+            opposite: true
+            min: 0
+            decimals: 0
+          - id: soc
+            opposite: true
+            min: 0
+            max: 100
+            decimals: 0
+        series:
+          - entity: sensor.BRIDGE_ebike_rider_power
+            name: Power (W)
+            yaxis_id: power
+            color: "#f2efe6"
+            stroke_width: 2
+          - entity: sensor.BRIDGE_ebike_speed
+            name: Speed (km/h)
+            yaxis_id: speed
+            color: "#8ab17d"
+            stroke_width: 2
+          - entity: sensor.BRIDGE_ebike_cadence
+            name: Cadence (rpm)
+            yaxis_id: cadence
+            color: "#f4a259"
+            stroke_width: 2
+          - entity: sensor.BRIDGE_ebike_battery_soc_live
+            name: Battery (%)
+            yaxis_id: soc
+            color: "#78c2ff"
+            stroke_width: 2
+        apex_config:
+          theme:
+            mode: dark
+          chart:
+            height: 320
+            background: transparent
+          stroke:
+            dashArray: [0, 8, 3, 12]
+          grid:
+            borderColor: "rgba(242,239,230,0.2)"
+
+      - type: markdown
+        content: "## Stages compared"
+      - type: custom:apexcharts-card
+        chart_type: line
+        graph_span: 30d
+        span:
+          end: day
+        header:
+          show: false
+        yaxis:
+          - min: 0
+            decimals: 0
+        series:
+          - entity: sensor.BIKE_last_ride_avg_power
+            name: Average power (W)
+            type: column
+            color: "#ffd23f"
+            group_by: { func: max, duration: 1d }
+          - entity: sensor.BIKE_last_ride_max_power
+            name: Maximum power (W)
+            type: column
+            color: "#a3b4cc"
+            group_by: { func: max, duration: 1d }
+          - entity: sensor.BIKE_avg_power_all_rides
+            name: Average, all rides (W)
+            type: line
+            color: "#f2efe6"
+            stroke_width: 2
+            group_by: { func: last, duration: 1d }
+        apex_config:
+          theme:
+            mode: dark
+          chart:
+            height: 300
+            background: transparent
+          stroke:
+            dashArray: [0, 0, 6]
+          grid:
+            borderColor: "rgba(242,239,230,0.2)"
+
+      - type: markdown
+        content: "## Fitness"
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: vertical-stack
+            cards:
+              - type: custom:button-card
+                entity: sensor.ebike_vo2max_estimate
+                name: VO2max, estimated
+                show_icon: false
+                show_name: true
+                show_state: true
+                show_label: true
+                label: "ESTIMATE, NOT MEASURED. ml/kg/min"
+                state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state); ]]]"
+                tap_action:
+                  action: more-info
+                styles:
+                  card:
+                    - background: transparent
+                    - box-shadow: none
+                    - border: none
+                    - border-radius: 0
+                    - border-top: 2px solid var(--primary-text-color)
+                    - padding: 8px 0 14px 0
+                  grid:
+                    - grid-template-areas: '"n" "s" "l"'
+                  name:
+                    - justify-self: start
+                    - font-size: 13px
+                    - font-weight: 600
+                    - letter-spacing: 0.05em
+                    - text-transform: uppercase
+                    - color: var(--secondary-text-color)
+                  state:
+                    - justify-self: start
+                    - font-family: '"Barlow Condensed", "Arial Narrow", sans-serif'
+                    - font-weight: 700
+                    - font-size: 104px
+                    - line-height: 1
+                  label:
+                    - justify-self: start
+                    - font-size: 13px
+                    - font-weight: 600
+                    - color: "#ffd23f"
+              - type: custom:apexcharts-card
+                chart_type: line
+                graph_span: 12w
+                span:
+                  end: day
+                header:
+                  show: false
+                statistics:
+                  period: day
+                  align: end
+                series:
+                  - entity: sensor.ebike_vo2max_estimate
+                    name: VO2max estimate
+                    color: "#ffd23f"
+                    stroke_width: 3
+                    statistics:
+                      type: max
+                    show:
+                      extremas: true
+                apex_config:
+                  theme:
+                    mode: dark
+                  chart:
+                    height: 220
+                    background: transparent
+                  grid:
+                    borderColor: "rgba(242,239,230,0.2)"
+          - type: vertical-stack
+            cards:
+              - type: entities
+                title: Rider profile
+                show_header_toggle: false
+                entities:
+                  - input_number.ebike_rider_weight
+                  - input_number.ebike_rider_age
+                  - input_number.ebike_rider_ftp
+                  - input_number.ebike_rider_rest_hr
+              - type: markdown
+                content: >
+                  FTP is a placeholder until you set yours; it only moves the zone
+                  boundaries (the colour thresholds in the profile chart are fixed
+                  for FTP 150 W and need editing if you change it).
+
+
+                  VO2max uses **10.8 x best 5-minute rider power / weight + 7**, or the
+                  watch value if `sensor.xiaomi_watch_5_vo2max` exists. Heart-rate
+                  cross-check (Uth): {{ state_attr('sensor.ebike_vo2max_estimate', 'vo2max_from_hr_uth') }}.
+                  Both are rough guides, not measurements. Power here is your own
+                  output, not motor assist.
+
+  # ---------------------------------------------------------------- ROUTES
+  # This repo's own cards.
+  - title: Routes
+    path: routes
+    icon: mdi:map
+    theme: Ebike Stage
+    cards:
+      - type: custom:bosch-ebike-dashboard-card
+      - type: custom:bosch-ebike-3d-map-card
+      - type: custom:bosch-ebike-heatmap-card
+        height: 500

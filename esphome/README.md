@@ -57,7 +57,9 @@ ESP itself (no VPN app on the phone needed), and MQTT. See
 **[MOBILE.md](MOBILE.md)** and
 [`example-bridge-mobile.yaml`](example-bridge-mobile.yaml). Note that it uses
 MQTT instead of the native API, which changes your entity ids in Home
-Assistant.
+Assistant. Add a microSD card and it also buffers ride data while
+disconnected and uploads it in order once you're back in range - see
+**[RIDE_LOGGING.md](RIDE_LOGGING.md)**.
 
 ### Prerequisites
 
@@ -250,7 +252,9 @@ den der ESP selbst aufbaut (keine VPN-App am Handy nötig), und MQTT. Siehe
 **[MOBILE.md](MOBILE.md)** und
 [`example-bridge-mobile.yaml`](example-bridge-mobile.yaml). Achtung: Es nutzt
 MQTT statt der nativen API, wodurch sich deine Entity-IDs in Home Assistant
-ändern.
+ändern. Mit einer microSD-Karte puffert es außerdem Fahrtdaten während der
+ESP offline ist und lädt sie in der richtigen Reihenfolge nach, sobald die
+Verbindung zurück ist - siehe **[RIDE_LOGGING.md](RIDE_LOGGING.md)**.
 
 ### Voraussetzungen
 

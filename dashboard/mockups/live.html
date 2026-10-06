@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>eBike Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bone: #edf1f5;
+  --navy: #0f1b2d;
+  --navy-soft: #3d4b61;
+  --rule: rgba(15, 27, 45, .28);
+  --z1: #2a9d8f; --z2: #8ab17d; --z3: #ffd23f; --z4: #f4a259; --z5: #ef6a43;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --text: "Barlow", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html { background: var(--bone); color-scheme: light; }
+body { margin: 0; min-height: 100dvh; background: var(--bone); color: var(--navy); font: 500 16px/1.4 var(--text); font-variant-numeric: tabular-nums; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; max-width: 520px; margin-inline: auto; }
+::selection { background: var(--navy); color: var(--bone); }
+:focus-visible { outline: 3px solid var(--navy); outline-offset: 3px; }
+
+.status { padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 44px; border-bottom: 2px solid var(--navy); font-weight: 600; font-size: .9375rem; }
+.status .link { display: inline-flex; align-items: center; gap: 8px; }
+.dot { width: 12px; height: 12px; background: var(--navy); display: inline-block; }
+.dot.off { background: transparent; border: 2px solid var(--navy); }
+.synthetic { font-size: .75rem; background: var(--navy); color: var(--bone); padding: 2px 8px; letter-spacing: .04em; }
+
+/* power: fixed cells so the number never shifts */
+.power { padding: 20px 0 8px; }
+.power .label { font-size: .9375rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--navy-soft); }
+.cells { display: flex; align-items: flex-end; gap: 8px; margin-top: 4px; }
+.cell { width: clamp(70px, 24vw, 108px); height: clamp(120px, 38vw, 176px); background: var(--navy); color: var(--bone); display: grid; place-items: center; font: 700 clamp(104px, 34vw, 160px)/1 var(--display); position: relative; overflow: hidden; }
+.cell::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: var(--bone); opacity: .85; }
+.cell span { display: block; transform-origin: 50% 50%; }
+.cell.flip span { animation: flip 220ms cubic-bezier(.16, 1, .3, 1); }
+@keyframes flip { from { transform: translateY(-34%) scaleY(.2); opacity: .2; } to { transform: none; opacity: 1; } }
+.cells .unit { font: 700 2.25rem/1 var(--display); padding-bottom: 12px; }
+
+.zones { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 16px; }
+.zones div { height: 40px; display: grid; place-items: center; font: 700 1.25rem/1 var(--display); color: var(--navy); opacity: .35; border: 2px solid transparent; }
+.zones div[aria-current="true"] { opacity: 1; border-color: var(--navy); height: 56px; align-self: end; }
+.zone-name { margin: 8px 0 0; font-weight: 600; min-height: 1.5em; }
+
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; margin-top: 12px; }
+.field { border-top: 2px solid var(--navy); padding: 8px 0 14px; }
+.field .label { font-size: .8125rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--navy-soft); }
+.field .v { font: 700 3.5rem/1 var(--display); display: flex; align-items: baseline; gap: 6px; }
+.field .v small { font: 600 1rem var(--text); color: var(--navy-soft); }
+.batt { grid-column: 1 / -1; }
+.bar { height: 14px; background: transparent; border: 2px solid var(--navy); margin-top: 6px; }
+.bar i { display: block; height: 100%; background: var(--navy); width: 70%; }
+
+.buffer { margin-top: auto; padding-top: 12px; border-top: 2px solid var(--navy); font-size: .9375rem; font-weight: 600; display: flex; justify-content: space-between; gap: 12px; }
+.buffer span:last-child { color: var(--navy-soft); font-weight: 500; }
+@media (prefers-reduced-motion: reduce) { .cell.flip span { animation: none; } }
+</style>
+</head>
+<body>
+<div class="status">
+  <span class="link">Bike linked</span>
+  <span class="link"><i class="dot" id="dot"></i><span id="linkText">Upload online</span></span>
+  <span class="synthetic">SYNTHETIC</span>
+</div>
+
+<section class="power" aria-label="Rider power">
+  <div class="label">Rider power</div>
+  <div class="cells" id="cells" aria-live="off"><span class="unit">W</span></div>
+  <div class="zones" id="zones" role="img" aria-label="Power zone"></div>
+  <p class="zone-name" id="zoneName"></p>
+</section>
+
+<section class="fields" aria-label="Ride">
+  <div class="field"><div class="label">Speed</div><div class="v"><span id="speed">0.0</span><small>km/h</small></div></div>
+  <div class="field"><div class="label">Cadence</div><div class="v"><span id="cad">0</span><small>rpm</small></div></div>
+  <div class="field batt"><div class="label">Battery</div><div class="v"><span id="soc">70</span><small>%</small></div><div class="bar" role="img" aria-label="Battery level"><i id="socbar"></i></div></div>
+</section>
+
+<div class="buffer"><span id="bufMain">Logging to card</span><span id="bufSub">0 waiting to upload</span></div>
+
+<script>
+(() => {
+  const ZC = ["--z1", "--z2", "--z3", "--z4", "--z5"].map(v => getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+  const ZN = ["Recovery", "Endurance", "Tempo", "Threshold", "Surge"], FTP = 150;
+  const $ = id => document.getElementById(id);
+  $("zones").innerHTML = ZC.map((c, i) => `<div style="background:${c}">${i + 1}</div>`).join("");
+  const cells = [0, 1, 2].map(() => { const c = document.createElement("div"); c.className = "cell"; c.innerHTML = "<span>0</span>"; $("cells").insertBefore(c, $("cells").lastElementChild); return c; });
+  let shown = ["", "", ""], p = 120, v = 19, cad = 74, soc = 70, tick = 0, offline = false, waiting = 0;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function setPower(w) {
+    const s = String(Math.max(0, Math.round(w))).padStart(3, " ");
+    s.split("").forEach((ch, i) => {
+      const hidden = ch === " " && i < 2 && s.slice(0, i + 1).trim() === "";
+      const out = hidden ? "" : ch;
+      if (shown[i] !== out) { shown[i] = out; cells[i].firstChild.textContent = out || " "; cells[i].style.opacity = hidden ? ".18" : "1"; if (!reduce) { cells[i].classList.remove("flip"); void cells[i].offsetWidth; cells[i].classList.add("flip"); } }
+    });
+    const z = w / FTP < .55 ? 0 : w / FTP < .75 ? 1 : w / FTP < .9 ? 2 : w / FTP < 1.05 ? 3 : 4;
+    [...$("zones").children].forEach((d, i) => i === z ? d.setAttribute("aria-current", "true") : d.removeAttribute("aria-current"));
+    $("zoneName").textContent = `Zone ${z + 1}, ${ZN[z]}`;
+  }
+  function step() {
+    tick++;
+    p = Math.max(0, p + (Math.sin(tick / 9) * 14 + (Math.random() - .5) * 26) - (p - 125) * .06);
+    v = Math.max(0, v + (p * .065 + 8 - v) * .15); cad = Math.max(0, cad + (p * .1 + 62 - cad) * .2); soc = Math.max(0, soc - .004);
+    setPower(p); $("speed").textContent = v.toFixed(1); $("cad").textContent = Math.round(cad);
+    $("soc").textContent = Math.round(soc); $("socbar").style.width = soc + "%";
+    // demo: a dead-zone every 40 s, lasting 12 s, to show the card taking over
+    const phase = tick % 40, now = phase >= 28;
+    if (now !== offline) { offline = now; waiting = 0; $("dot").classList.toggle("off", offline); $("linkText").textContent = offline ? "Upload offline" : "Upload online"; }
+    if (offline) waiting++; else if (waiting > 0) waiting = Math.max(0, waiting - 4);
+    $("bufMain").textContent = offline ? "Offline: saving to card" : (waiting > 0 ? "Uploading saved data" : "Logging to card");
+    $("bufSub").textContent = waiting > 0 ? `${waiting} waiting to upload` : "Nothing waiting";
+  }
+  step(); setInterval(step, 1000);
+})();
+</script>
+</body>
+</html>

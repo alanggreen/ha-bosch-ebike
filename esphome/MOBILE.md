@@ -116,6 +116,16 @@ normal home routing. The example therefore enables the tunnel only when the
 connected SSID is your hotspot, and disables it otherwise (a `wifi_info`
 text sensor drives `wireguard.enable` / `wireguard.disable`).
 
+### Offline ride data buffering (optional, needs a microSD card)
+
+The setup above still loses samples during a dropout - the ESP has nowhere to
+put data MQTT can't currently deliver. Add a microSD card and the
+`ride_data_logger` component to change that: it buffers to the card while
+disconnected and replays everything in order once you're back in range. See
+**[RIDE_LOGGING.md](RIDE_LOGGING.md)** for wiring and configuration; it's
+already wired up (commented with pin defaults to adjust) in
+[`example-bridge-mobile.yaml`](example-bridge-mobile.yaml).
+
 ### WireGuard troubleshooting
 
 If the tunnel comes up (handshake OK, you can even ping the ESP) but MQTT never
@@ -293,6 +303,16 @@ während der ESP im Heim-WLAN hängt, gäbe das einen Routing-Konflikt. Das
 Beispiel aktiviert den Tunnel daher nur, wenn das verbundene WLAN dein Hotspot
 ist, und deaktiviert ihn sonst (ein `wifi_info`-Textsensor steuert
 `wireguard.enable` / `wireguard.disable`).
+
+### Offline-Datenpufferung (optional, benötigt eine microSD-Karte)
+
+Beim Setup oben gehen bei einem Aussetzer trotzdem Daten verloren - der ESP
+hat nichts, wohin er Werte legen könnte, die MQTT gerade nicht zustellen kann.
+Eine microSD-Karte plus die Komponente `ride_data_logger` ändern das: Sie
+puffert offline auf die Karte und spielt beim Wiederverbinden alles der Reihe
+nach nach. Siehe **[RIDE_LOGGING.md](RIDE_LOGGING.md)** für Verkabelung und
+Konfiguration; in [`example-bridge-mobile.yaml`](example-bridge-mobile.yaml)
+ist es bereits verdrahtet (mit Pin-Vorgaben zum Anpassen, kommentiert).
 
 ### WireGuard-Fehlersuche
 
