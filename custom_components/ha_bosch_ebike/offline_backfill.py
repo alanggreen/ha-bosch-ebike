@@ -26,6 +26,7 @@ Opt-in via ``configuration.yaml`` (see ``OFFLINE_BACKFILL_SCHEMA``)::
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import time
@@ -39,7 +40,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 
-from .backfill_core import BackfillCore, RawLog, aggregate_hour, hour_of
+from .backfill_core import BackfillCore, RawLog, aggregate_hour, ack_mac, hour_of
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ CONF_STATUS_TOPIC = "status_topic"
 CONF_ENTITIES = "entities"
 CONF_IMPORT_STATISTICS = "import_statistics"
 CONF_KEEP_DAYS = "keep_days"
+CONF_ACK_SECRET = "ack_secret"
 
 # Matches ride_data_logger's default topic (<esphome node name>/ride_log) for
 # example-bridge-mobile.yaml. Override `topic` if your node is named differently.
@@ -84,7 +86,11 @@ OFFLINE_BACKFILL_SCHEMA = vol.Schema(
         vol.Optional(CONF_ENTITIES, default={}): {cv.string: cv.entity_id},
         vol.Optional(CONF_IMPORT_STATISTICS, default=True): cv.boolean,
         # Delete raw day files older than this many days (0 = keep forever).
-        vol.Optional(CONF_KEEP_DAYS, default=0): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        vol.Optional(CONF_KEEP_DAYS, default=180): vol.All(vol.Coerce(int), vol.Range(min=0)),
+        # Shared secret that signs the acks sent to the ESP, so a stranger on the
+        # broker cannot make it delete unsent data. Must equal `ack_secret` in the
+        # ESP's ride_data_logger; set it on BOTH sides or neither.
+        vol.Optional(CONF_ACK_SECRET): cv.string,
     }
 )
 
@@ -99,6 +105,7 @@ class OfflineBackfill:
         self.status_topic: str = conf.get(CONF_STATUS_TOPIC) or f"{self.topic}/status"
         self.import_statistics: bool = conf[CONF_IMPORT_STATISTICS]
         self.keep_days: int = conf[CONF_KEEP_DAYS]
+        self.ack_secret: str | None = conf.get(CONF_ACK_SECRET)
         self.entities: dict[str, tuple[str, str | None]] = dict(DEFAULT_ENTITIES)
         for key, entity_id in conf[CONF_ENTITIES].items():
             self.entities[key] = (entity_id, self.entities.get(key, (None, None))[1])
@@ -216,12 +223,26 @@ class OfflineBackfill:
                 _LOGGER.exception("Failed to store ride samples; the bridge will resend them")
 
     async def _process(self, batch: list[Any]) -> None:
+        # ingest() advances the in-memory duplicate filter. If storing then fails
+        # (disk full, I/O error), roll that back, otherwise the resend would be
+        # dropped as a "duplicate" of something that was never saved.
+        before = copy.deepcopy(self._core.state())
+        try:
+            await self._process_batch(batch)
+        except BaseException:
+            self._core = BackfillCore(before)
+            raise
+
+    async def _process_batch(self, batch: list[Any]) -> None:
         resolved: list[dict[str, Any]] = []
         last_id: tuple[int, int] | None = None
         for payload in batch:
             rec = self._core.parse(payload)
             if rec is None:
+                ident = self._core.identify(payload)
                 _LOGGER.warning("Discarding malformed ride sample: %.200s", payload)
+                if ident is not None:
+                    last_id = ident  # ack it so the ESP does not resend it forever
                 continue
             _, out = self._core.ingest(rec)
             resolved.extend(out)
@@ -252,7 +273,10 @@ class OfflineBackfill:
     async def _async_publish_ack(self, ident: tuple[int, int]) -> None:
         from homeassistant.components import mqtt
 
-        payload = json.dumps({"boot": ident[0], "seq": ident[1]}, separators=(",", ":"))
+        body: dict[str, Any] = {"boot": ident[0], "seq": ident[1]}
+        if self.ack_secret:
+            body["mac"] = ack_mac(self.ack_secret, ident[0], ident[1])
+        payload = json.dumps(body, separators=(",", ":"))
         try:
             await mqtt.async_publish(self.hass, self.ack_topic, payload, 1, False)
         except Exception:  # noqa: BLE001 - unacked data is simply resent

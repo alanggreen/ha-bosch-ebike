@@ -7,9 +7,13 @@
 #include "esphome/core/log.h"
 
 #include "esp_random.h"
+#include "mbedtls/md.h"
 #include "esp_vfs_fat.h"
 #include "driver/sdspi_host.h"
 #include "driver/spi_common.h"
+#include "ff.h"
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include <cinttypes>
 #include <cmath>
@@ -90,6 +94,47 @@ bool RideDataLogger::mount_sd_() {
   return true;
 }
 
+static const char *fr_name(FRESULT r) {
+  static const char *const names[] = {"OK", "DISK_ERR", "INT_ERR", "NOT_READY", "NO_FILE", "NO_PATH",
+                                      "INVALID_NAME", "DENIED", "EXIST", "INVALID_OBJECT", "WRITE_PROTECTED",
+                                      "INVALID_DRIVE", "NOT_ENABLED", "NO_FILESYSTEM", "MKFS_ABORTED", "TIMEOUT",
+                                      "LOCKED", "NOT_ENOUGH_CORE", "TOO_MANY_OPEN_FILES", "INVALID_PARAMETER"};
+  return (int) r >= 0 && (int) r < 20 ? names[r] : "?";
+}
+
+// Talk to FatFs directly (bypassing the VFS layer) so the log shows the real
+// reason when the card mounts but files/folders cannot be created.
+void RideDataLogger::diagnose_sd_() {
+  FATFS *fs = nullptr;
+  DWORD free_clusters = 0;
+  FRESULT r = f_getfree("0:", &free_clusters, &fs);
+  ESP_LOGE(TAG, "diag f_getfree: %s (free clusters %u, cluster size %u sectors)", fr_name(r),
+           (unsigned) free_clusters, fs != nullptr ? (unsigned) fs->csize : 0u);
+  r = f_mkdir("0:/rlog");
+  ESP_LOGE(TAG, "diag f_mkdir 0:/rlog: %s", fr_name(r));
+  FIL f;
+  r = f_open(&f, "0:/probe.tmp", FA_WRITE | FA_CREATE_ALWAYS);
+  ESP_LOGE(TAG, "diag f_open(write) 0:/probe.tmp: %s", fr_name(r));
+  if (r == FR_OK) {
+    UINT bw = 0;
+    r = f_write(&f, "x", 1, &bw);
+    ESP_LOGE(TAG, "diag f_write: %s (%u bytes)", fr_name(r), (unsigned) bw);
+    FRESULT c = f_close(&f);
+    ESP_LOGE(TAG, "diag f_close: %s", fr_name(c));
+    f_unlink("0:/probe.tmp");
+  }
+  DIR *d = opendir(MOUNT_POINT);
+  ESP_LOGE(TAG, "diag opendir(%s): %s", MOUNT_POINT, d != nullptr ? "ok" : "FAILED");
+  if (d != nullptr)
+    closedir(d);
+  FILE *pf = fopen("/sdcard/probe2.tmp", "wb");
+  ESP_LOGE(TAG, "diag fopen(/sdcard/probe2.tmp): %s (errno %d)", pf != nullptr ? "ok" : "FAILED", errno);
+  if (pf != nullptr) {
+    fclose(pf);
+    remove("/sdcard/probe2.tmp");
+  }
+}
+
 // ---- Lifecycle ---------------------------------------------------------------
 
 void RideDataLogger::setup() {
@@ -111,6 +156,7 @@ void RideDataLogger::setup() {
       if (!store_->open()) {
         ESP_LOGE(TAG, "Could not use the SD card for the ride log (errno %d: %s) - is it write protected or read-only?",
                  store_->last_errno(), strerror(store_->last_errno()));
+        diagnose_sd_();
         delete store_;
         store_ = nullptr;
         sd_mounted_ = false;
@@ -146,6 +192,7 @@ void RideDataLogger::dump_config() {
   ESP_LOGCONFIG(TAG, "  Sample interval: %" PRIu32 " ms", sample_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Replay topic: %s", replay_topic_.c_str());
   ESP_LOGCONFIG(TAG, "  Ack topic: %s", ack_topic_.c_str());
+  ESP_LOGCONFIG(TAG, "  Ack signing: %s", ack_secret_.empty() ? "OFF (any broker client can ack)" : "on");
   ESP_LOGCONFIG(TAG, "  Status topic: %s", status_topic_.c_str());
   ESP_LOGCONFIG(TAG, "  Max sends/loop: %u, max unacked in flight: %u, ack timeout: %" PRIu32 " ms",
                 max_replay_per_loop_, max_unacked_, ack_timeout_ms_);
@@ -297,10 +344,38 @@ void RideDataLogger::service_send_() {
   }
 }
 
+// Constant-time check of the HMAC-SHA256 over "<boot>:<seq>" (see ack_mac() in
+// backfill_core.py). Only called when a secret is configured.
+bool RideDataLogger::ack_valid_(uint32_t boot, uint32_t seq, const char *mac_hex) const {
+  if (mac_hex == nullptr || strlen(mac_hex) != 64)
+    return false;
+  char msg[32];
+  int n = snprintf(msg, sizeof(msg), "%" PRIu32 ":%" PRIu32, boot, seq);
+  unsigned char digest[32];
+  if (n <= 0 || mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),
+                                reinterpret_cast<const unsigned char *>(ack_secret_.data()), ack_secret_.size(),
+                                reinterpret_cast<const unsigned char *>(msg), (size_t) n, digest) != 0)
+    return false;
+  static const char *const hex = "0123456789abcdef";
+  unsigned char diff = 0;
+  for (int i = 0; i < 32; i++) {
+    diff |= (unsigned char) (hex[digest[i] >> 4] ^ mac_hex[2 * i]);
+    diff |= (unsigned char) (hex[digest[i] & 0x0f] ^ mac_hex[2 * i + 1]);
+  }
+  return diff == 0;
+}
+
 void RideDataLogger::on_ack_(JsonObject root) {
   if (store_ == nullptr || !root["boot"].is<uint32_t>() || !root["seq"].is<uint32_t>())
     return;
-  if (store_->ack(root["boot"].as<uint32_t>(), root["seq"].as<uint32_t>())) {
+  const uint32_t ack_boot = root["boot"].as<uint32_t>();
+  const uint32_t ack_seq = root["seq"].as<uint32_t>();
+  if (!ack_secret_.empty() && !ack_valid_(ack_boot, ack_seq, root["mac"].as<const char *>())) {
+    ESP_LOGW(TAG, "Ignoring an ack with a missing or wrong signature (boot %" PRIu32 ", seq %" PRIu32 ")", ack_boot,
+             ack_seq);
+    return;
+  }
+  if (store_->ack(ack_boot, ack_seq)) {
     last_progress_ms_ = millis();
     window_limit_ = window_limit_ >= max_unacked_ / 2 ? max_unacked_ : window_limit_ * 2;
   }

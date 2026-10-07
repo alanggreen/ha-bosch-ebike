@@ -18,7 +18,10 @@ HA lets ``tests/test_backfill_core.py`` run it standalone.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import math
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -27,11 +30,31 @@ MAX_BOOTS = 64  # remembered boot ids; older ones are forgotten (FIFO)
 MAX_PENDING = 50000  # samples held while no clock offset is known
 RESERVED_FIELDS = {"boot", "seq", "epoch", "uptime_ms"}
 
+# Input limits: the MQTT topic is writable by anyone with a broker login, so
+# nothing in a payload is trusted.
+MIN_EPOCH = 1577836800  # 2020-01-01: anything earlier is a clock that never synced
+MAX_EPOCH = 4102444800  # 2100-01-01
+MAX_UINT32 = 2**32 - 1
+MAX_FIELDS = 32  # sensor values per record
+MAX_KEY_LEN = 64
+
+
+def ack_mac(secret: str, boot: int, seq: int) -> str:
+    """HMAC-SHA256 (hex) that authenticates an ack for record (boot, seq).
+
+    Must match RideDataLogger::ack_valid_ in the ESP firmware: the message is the
+    decimal text boot:seq, the key is the shared secret, the output is 64
+    lower-case hex characters.
+    """
+    return hmac.new(secret.encode(), f"{boot}:{seq}".encode(), hashlib.sha256).hexdigest()
+
 
 def _as_uint(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    if value < 0 or value != int(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if value < 0 or value != int(value) or value > MAX_UINT32:
         return None
     return int(value)
 
@@ -78,12 +101,16 @@ class BackfillCore:
         if boot is None or seq is None or uptime is None:
             return None
         epoch = _as_uint(payload.get("epoch"))
-        data = {
-            k: v
-            for k, v in payload.items()
-            if k not in RESERVED_FIELDS
-            and (isinstance(v, bool) or (isinstance(v, (int, float)) and v == v))
-        }
+        if epoch is not None and not MIN_EPOCH <= epoch <= MAX_EPOCH:
+            epoch = None  # implausible clock: treat as "no clock yet", never as a date
+        data = {}
+        for k, v in payload.items():
+            if len(data) >= MAX_FIELDS:
+                break
+            if k in RESERVED_FIELDS or not isinstance(k, str) or not 0 < len(k) <= MAX_KEY_LEN:
+                continue
+            if isinstance(v, bool) or (isinstance(v, (int, float)) and math.isfinite(v)):
+                data[k] = v
         return {
             "boot": str(boot),
             "seq": seq,
@@ -91,6 +118,18 @@ class BackfillCore:
             "epoch": epoch or None,
             "data": data,
         }
+
+    @staticmethod
+    def identify(payload: Any) -> tuple[int, int] | None:
+        """(boot, seq) of a payload even when the rest of it is unusable.
+
+        Lets the receiver acknowledge (and thereby drop) a record it cannot
+        store, so one bad record cannot block the sender's queue forever.
+        """
+        if not isinstance(payload, dict):
+            return None
+        boot, seq = _as_uint(payload.get("boot")), _as_uint(payload.get("seq"))
+        return (boot, seq) if boot is not None and seq is not None else None
 
     def ingest(self, rec: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
         """Feed one parsed record (see ``parse``).

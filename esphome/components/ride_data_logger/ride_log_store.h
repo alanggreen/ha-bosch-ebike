@@ -85,9 +85,34 @@ class RideLogStore {
   // Scan the card, restore the acknowledged position, start a FRESH write
   // segment (so a torn tail from a previous crash is never appended to).
   bool open() {
-    if (mkdir(dir_.c_str(), 0775) != 0 && errno != EEXIST) {
-      last_errno_ = errno;
-      return false;
+    // Do not trust mkdir's result alone: on a FAT mount it can fail without a usable
+    // errno when the folder already exists (and always for the card root). What
+    // matters is whether the folder can be opened and written to.
+    if (mkdir(dir_.c_str(), 0775) != 0) {
+      int mk_errno = errno;
+      DIR *probe_dir = opendir(dir_.c_str());
+      if (probe_dir == nullptr) {
+        last_errno_ = errno != 0 ? errno : mk_errno;
+        return false;
+      }
+      closedir(probe_dir);
+    }
+    {
+      // Prove the card is writable now, so a read-only or failing card is
+      // reported at start-up with a real error instead of later at the first sample.
+      std::string probe = dir_ + "/probe.tmp";
+      FILE *pf = fopen(probe.c_str(), "wb");
+      if (pf == nullptr) {
+        last_errno_ = errno;
+        return false;
+      }
+      bool wrote = fputc('x', pf) != EOF;
+      int cl = fclose(pf);
+      remove(probe.c_str());
+      if (!wrote || cl != 0) {
+        last_errno_ = errno;
+        return false;
+      }
     }
 
     uint32_t lo = 0, hi = 0;

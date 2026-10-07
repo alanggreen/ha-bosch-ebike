@@ -15,6 +15,11 @@ from esphome import pins
 from esphome.components import binary_sensor, sensor
 from esphome.components import time as time_
 from esphome.components.esp32 import include_builtin_idf_component, require_fatfs
+
+try:
+    from esphome.components.esp32 import require_vfs_dir
+except ImportError:  # older ESPHome: directory support is never switched off
+    require_vfs_dir = None
 from esphome.const import CONF_BINARY_SENSORS, CONF_ID, CONF_KEY, CONF_SENSORS, CONF_TIME_ID
 from esphome.core import CORE
 
@@ -32,6 +37,7 @@ CONF_CLK_PIN = "clk_pin"
 CONF_SAMPLE_INTERVAL = "sample_interval"
 CONF_REPLAY_TOPIC = "replay_topic"
 CONF_RECORD_WHEN = "record_when"
+CONF_ACK_SECRET = "ack_secret"
 CONF_ACK_TOPIC = "ack_topic"
 CONF_STATUS_TOPIC = "status_topic"
 CONF_MAX_REPLAY_PER_LOOP = "max_replay_per_loop"
@@ -65,6 +71,10 @@ BINARY_SENSOR_ENTRY_SCHEMA = cv.Schema(
 
 
 def _validate_counts(config):
+    # Must be requested while the config is validated: the esp32 component decides
+    # whether to switch VFS directory support off before our to_code() runs.
+    if require_vfs_dir is not None:
+        require_vfs_dir()
     if len(config[CONF_SENSORS]) > MAX_SENSORS:
         raise cv.Invalid(f"ride_data_logger supports at most {MAX_SENSORS} entries under 'sensors'")
     if len(config[CONF_BINARY_SENSORS]) > MAX_BINARY_SENSORS:
@@ -92,6 +102,10 @@ CONFIG_SCHEMA = cv.All(
             # (e.g. the bridge's "eBike Connected"), so the card does not fill up
             # with empty rows while the bike is off. Without it, always record.
             cv.Optional(CONF_RECORD_WHEN): cv.use_id(binary_sensor.BinarySensor),
+            # Optional shared secret. When set, an ack is only accepted if it carries
+            # "mac" = HMAC-SHA256(secret, "<boot>:<seq>") as 64 hex chars. Set the same
+            # value as `ack_secret` of offline_backfill in Home Assistant, or on neither.
+            cv.Optional(CONF_ACK_SECRET): cv.string_strict,
             cv.Optional(CONF_ACK_TOPIC): cv.subscribe_topic,
             cv.Optional(CONF_STATUS_TOPIC): cv.publish_topic,
             cv.Optional(CONF_MAX_REPLAY_PER_LOOP, default=4): cv.int_range(min=1, max=50),
@@ -136,6 +150,8 @@ async def to_code(config):
     if gate_id := config.get(CONF_RECORD_WHEN):
         gate = await cg.get_variable(gate_id)
         cg.add(var.set_record_when(gate))
+    if ack_secret := config.get(CONF_ACK_SECRET):
+        cg.add(var.set_ack_secret(ack_secret))
     if ack_topic := config.get(CONF_ACK_TOPIC):
         cg.add(var.set_ack_topic(ack_topic))
     if status_topic := config.get(CONF_STATUS_TOPIC):

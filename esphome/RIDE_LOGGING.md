@@ -81,6 +81,15 @@ ha_bosch_ebike:
 
 Requires the MQTT integration. For each sample it: drops resends, restores the real timestamp, appends it to `<config>/ha_bosch_ebike_ride_log/YYYY-MM-DD.jsonl`, saves its dedupe state, and only then publishes the ack. Hourly mean/min/max of speed, cadence, rider power, ambient brightness and battery SoC are imported into long-term statistics at the samples' **original** time (the odometer and flags stay in the raw log only). It is opt-in YAML because the integration is otherwise config-entry only.
 
+### Security notes
+
+- **Broker login:** give the bridge its own broker login and restrict it with a Mosquitto ACL to its own topics (`<node name>/#` and `homeassistant/#`). Anyone who holds a broker login can otherwise publish fake samples or read every other topic.
+- **Signed acks (optional):** set the same `ack_secret` in the ESP's `ride_data_logger` (`!secret ride_ack_secret`) and under `offline_backfill:` in Home Assistant's `configuration.yaml`. The ESP then only deletes data for acks carrying a valid HMAC-SHA256. Set it on **both** sides or neither: with only the ESP side set, no ack is ever accepted and the backlog never drains.
+- **Keep-alive:** the example config uses `keepalive: 60s`. The 15 s default drops the session on a path with a router and VPN in it (`exceeded timeout` in the broker log).
+- **Device access:** `ota_password`, the web server login and the fallback AP password come from `secrets.yaml`. Without an OTA password anyone on the network can replace the firmware.
+- **Plain MQTT:** port 1883 is unencrypted on the LAN. Use TLS (port 8883) if the ESP and broker are not on a network you trust.
+- **Input limits (Home Assistant side):** implausible dates, huge numbers, too many fields and long keys are rejected or ignored, an unusable record is acknowledged and dropped instead of blocking the queue, and raw logs older than `keep_days` (default 180) are deleted.
+
 ### Troubleshooting
 
 | Symptom | Cause |

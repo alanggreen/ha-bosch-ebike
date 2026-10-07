@@ -166,3 +166,58 @@ def test_aggregate_hour_ignores_booleans_and_missing():
     assert agg["speed"] == {"mean": 15.0, "min": 10.0, "max": 20.0}
     assert agg["cadence"]["mean"] == 80.0
     assert "light" not in agg and "power" not in agg
+
+
+def test_implausible_epoch_is_not_trusted_as_a_date():
+    p = bc.BackfillCore.parse
+    for bad in (1, 946684800, 4_294_967_295, 99_999_999_999):
+        rec = p({"boot": 1, "seq": 1, "uptime_ms": 5, "epoch": bad})
+        assert rec is not None and rec["epoch"] is None, bad
+    good = p({"boot": 1, "seq": 1, "uptime_ms": 5, "epoch": T0})
+    assert good["epoch"] == T0
+
+
+def test_huge_or_non_finite_numbers_are_rejected():
+    p = bc.BackfillCore.parse
+    assert p({"boot": 2**40, "seq": 1, "uptime_ms": 5}) is None
+    assert p({"boot": 1, "seq": float("inf"), "uptime_ms": 5}) is None
+    assert p({"boot": 1, "seq": 1, "uptime_ms": float("nan")}) is None
+    rec = p({"boot": 1, "seq": 1, "uptime_ms": 5, "speed": float("nan"), "ok": 1.5})
+    assert rec["data"] == {"ok": 1.5}
+
+
+def test_field_count_and_key_length_are_limited():
+    p = bc.BackfillCore.parse
+    payload = {"boot": 1, "seq": 1, "uptime_ms": 5}
+    payload.update({f"k{i}": float(i) for i in range(100)})
+    payload["x" * 200] = 1.0
+    rec = p(payload)
+    assert len(rec["data"]) <= bc.MAX_FIELDS
+    assert all(len(k) <= bc.MAX_KEY_LEN for k in rec["data"])
+
+
+def test_identify_works_even_when_the_rest_is_garbage():
+    assert bc.BackfillCore.identify({"boot": 5, "seq": 9, "uptime_ms": "bad"}) == (5, 9)
+    assert bc.BackfillCore.identify({"boot": 5}) is None
+    assert bc.BackfillCore.identify("nope") is None
+
+
+def test_poison_epoch_cannot_reach_the_file_writer():
+    # A date that cannot be formatted must never get as far as RawLog.
+    core = bc.BackfillCore()
+    rec = core.parse({"boot": 1, "seq": 0, "uptime_ms": 1000, "epoch": 99_999_999_999})
+    status, res = core.ingest(rec)
+    assert status == "new" and res == []  # waits for a real clock instead of crashing
+    with tempfile.TemporaryDirectory() as d:
+        bc.RawLog(d).append(res)  # nothing to write, and no exception
+
+
+def test_ack_mac_matches_a_reference_hmac():
+    import hashlib
+    import hmac
+
+    expect = hmac.new(b"s3cret", b"123:45", hashlib.sha256).hexdigest()
+    assert bc.ack_mac("s3cret", 123, 45) == expect
+    assert len(expect) == 64 and expect == expect.lower()
+    assert bc.ack_mac("other", 123, 45) != expect
+    assert bc.ack_mac("s3cret", 123, 46) != expect

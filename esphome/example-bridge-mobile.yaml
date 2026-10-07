@@ -47,6 +47,10 @@ esp32:
   board: esp32dev
   framework:
     type: esp-idf
+    advanced:
+      # The SD-card log needs folder support (mkdir/opendir/stat); ESPHome switches
+      # it off by default.
+      disable_vfs_support_dir: false
     sdkconfig_options:
       CONFIG_BT_ENABLED: y
       CONFIG_BT_NIMBLE_ENABLED: y
@@ -74,6 +78,8 @@ logger:
 
 ota:
   - platform: esphome
+    # Without a password anyone on the network can replace the firmware.
+    password: !secret ota_password
 
 # --- MQTT (replaces the native api:) ----------------------------------------
 # IMPORTANT: do NOT enable api: at the same time, or the device shows up
@@ -90,6 +96,11 @@ mqtt:
   username: !secret mqtt_user
   password: !secret mqtt_password
   discovery: true
+  # 15 s (the default) is too tight for a path through a router and a VPN: one
+  # stalled second makes the broker drop the session ("exceeded timeout").
+  keepalive: 60s
+  # Do not copy every log line to the broker (leaks SSID/IP and adds traffic).
+  log_topic:
   discovery_prefix: homeassistant
   # Let only the WiFi reboot_timeout below trigger reboots, not MQTT.
   reboot_timeout: 0s
@@ -111,12 +122,16 @@ wifi:
 
   ap:
     ssid: "eBike Bridge Mobile Setup"
+    password: !secret ap_password
 
 captive_portal:
 
 web_server:
   port: 80
   version: 3
+  auth:
+    username: ebike
+    password: !secret web_password
 
 # WireGuard requires a time source.
 time:
@@ -205,6 +220,9 @@ ride_data_logger:
   miso_pin: GPIO19
   clk_pin: GPIO18
   time_id: sntp_time
+  # Optional: authenticate acks from Home Assistant (set the SAME value as
+  # `ack_secret` under offline_backfill in configuration.yaml, or leave both off):
+  # ack_secret: !secret ride_ack_secret
   record_when: connected_sensor   # only log while the bike is connected
   # Defaults shown for reference:
   # replay_topic: ebike-bridge-mobile/ride_log        # <node name>/ride_log
@@ -241,7 +259,8 @@ ride_data_logger:
       key: "in_motion"
 
 # Status LED (the blue LED on the ESP32 devkit, GPIO2):
-#   off               = bike not connected, nothing is being recorded
+#   tiny tick / 5 s   = powered and idle: bike not connected, nothing is being recorded
+#   (completely dark  = no power / dead board)
 #   short blink / 2 s = bike connected, samples are being written to the card
 #   fast flicker      = problem: no usable SD card, or card writes are failing
 output:
@@ -259,7 +278,7 @@ interval:
           switch (id(ride_logger).led_state()) {
             case 1: on = (tick % 20) < 2; break;   // 200 ms on, 1.8 s off
             case 2: on = (tick % 2) == 0; break;   // 5 Hz flicker
-            default: on = false;
+            default: on = (tick % 50) == 0;       // idle: tiny tick every 5 s = "powered, waiting for the bike"
           }
           if (on) id(status_led_out).turn_on(); else id(status_led_out).turn_off();
 

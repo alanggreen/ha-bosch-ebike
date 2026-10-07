@@ -46,6 +46,7 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   void set_sample_interval(uint32_t ms) { sample_interval_ms_ = ms; }
   void set_replay_topic(const std::string &topic) { replay_topic_ = topic; }
   void set_ack_topic(const std::string &topic) { ack_topic_ = topic; }
+  void set_ack_secret(const std::string &secret) { ack_secret_ = secret; }
   void set_status_topic(const std::string &topic) { status_topic_ = topic; }
   void set_max_replay_per_loop(uint8_t n) { max_replay_per_loop_ = n; }
   void set_max_unacked(uint16_t n) { max_unacked_ = n; }
@@ -64,6 +65,7 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
  protected:
   // ---- SD card (raw ESP-IDF SDSPI + FATFS) ----
   bool mount_sd_();
+  void diagnose_sd_();  // prints raw FatFs results when the log cannot be set up
   bool sd_mounted_{false};
   sdmmc_card_t *card_{nullptr};
 
@@ -101,6 +103,7 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   RideLogStore *store_{nullptr};
   std::string replay_topic_;
   std::string ack_topic_;
+  std::string ack_secret_;  // empty = acks are not authenticated
   std::string status_topic_;
   uint8_t max_replay_per_loop_{4};
   uint16_t max_unacked_{16};
@@ -119,6 +122,7 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   void service_send_();
   void publish_status_();
   void on_ack_(JsonObject root);
+  bool ack_valid_(uint32_t boot, uint32_t seq, const char *mac_hex) const;
   bool publish_record_(const RideRecord &rec);
 };
 
