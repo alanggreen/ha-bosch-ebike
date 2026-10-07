@@ -168,7 +168,7 @@ template:
         state_class: measurement
         # Replace BIKE with your bike's entity prefix, as in ebike-dashboard.yaml.
         state: >
-          {% set p = states('sensor.BIKE_last_ride_avg_power') | float(0) %}
+          {% set p = states('sensor.active_line_plus_last_ride_avg_power') | float(0) %}
           {% set w = states('input_number.ebike_rider_weight') | float(0) %}
           {{ (p / w) | round(2) if p > 0 and w > 0 else 'unavailable' }}
 

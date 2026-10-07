@@ -4,10 +4,10 @@
 # Requires: this repo's ha_bosch_ebike integration (its cards load automatically),
 #           dashboard/ebike_package.yaml and dashboard/themes/ebike.yaml installed.
 #
-# BEFORE USE replace two tokens in this file and ebike_package.yaml:
-#   BIKE_   -> prefix of the Bosch integration sensors, e.g. sensor.my_ebike_last_ride_avg_power -> my_ebike_
-#   BRIDGE_ -> prefix of the ESP bridge sensors, e.g. sensor.ebike_bridge_mobile_ebike_speed -> ebike_bridge_mobile_
-#   sed -i 's/BIKE_/my_ebike_/g; s/BRIDGE_/ebike_bridge_mobile_/g' ebike-dashboard.yaml ebike_package.yaml
+# Entity prefixes are already filled in for this installation:
+#   Bosch integration sensors:  sensor.active_line_plus_*
+#   ESP bridge sensors:         sensor.ebike_bridge_mobile_ebike_*
+# If your entity names differ, find/replace them in this file and ebike_package.yaml.
 #
 # Add it in configuration.yaml:
 #   lovelace:
@@ -222,12 +222,12 @@ views:
         cards:
           - type: custom:button-card
             template: ebike_field
-            entity: sensor.BIKE_last_ride_avg_power
+            entity: sensor.active_line_plus_last_ride_avg_power
             name: Last ride, average power
             state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' W'; ]]]"
           - type: custom:button-card
             template: ebike_field
-            entity: sensor.BIKE_last_ride_max_power
+            entity: sensor.active_line_plus_last_ride_max_power
             name: Last ride, maximum power
             state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' W'; ]]]"
           - type: custom:button-card
@@ -237,7 +237,7 @@ views:
             state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : parseFloat(entity.state).toFixed(2) + ' W/kg'; ]]]"
           - type: custom:button-card
             template: ebike_field
-            entity: sensor.BIKE_avg_power_all_rides
+            entity: sensor.active_line_plus_avg_power_all_rides
             name: Average, all rides
             state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' W'; ]]]"
 
@@ -363,17 +363,17 @@ views:
           - min: 0
             decimals: 0
         series:
-          - entity: sensor.BIKE_last_ride_avg_power
+          - entity: sensor.active_line_plus_last_ride_avg_power
             name: Average power (W)
             type: column
             color: "#ffd23f"
             group_by: { func: max, duration: 1d }
-          - entity: sensor.BIKE_last_ride_max_power
+          - entity: sensor.active_line_plus_last_ride_max_power
             name: Maximum power (W)
             type: column
             color: "#a3b4cc"
             group_by: { func: max, duration: 1d }
-          - entity: sensor.BIKE_avg_power_all_rides
+          - entity: sensor.active_line_plus_avg_power_all_rides
             name: Average, all rides (W)
             type: line
             color: "#f2efe6"
