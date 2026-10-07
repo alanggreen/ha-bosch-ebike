@@ -31,6 +31,7 @@ CONF_MISO_PIN = "miso_pin"
 CONF_CLK_PIN = "clk_pin"
 CONF_SAMPLE_INTERVAL = "sample_interval"
 CONF_REPLAY_TOPIC = "replay_topic"
+CONF_RECORD_WHEN = "record_when"
 CONF_ACK_TOPIC = "ack_topic"
 CONF_STATUS_TOPIC = "status_topic"
 CONF_MAX_REPLAY_PER_LOOP = "max_replay_per_loop"
@@ -87,6 +88,10 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_REPLAY_TOPIC, default=lambda: f"{CORE.name}/ride_log"): cv.publish_topic,
             # Defaults to <replay_topic>/ack and <replay_topic>/status.
+            # Optional gate: only record samples while this binary sensor is ON
+            # (e.g. the bridge's "eBike Connected"), so the card does not fill up
+            # with empty rows while the bike is off. Without it, always record.
+            cv.Optional(CONF_RECORD_WHEN): cv.use_id(binary_sensor.BinarySensor),
             cv.Optional(CONF_ACK_TOPIC): cv.subscribe_topic,
             cv.Optional(CONF_STATUS_TOPIC): cv.publish_topic,
             cv.Optional(CONF_MAX_REPLAY_PER_LOOP, default=4): cv.int_range(min=1, max=50),
@@ -128,6 +133,9 @@ async def to_code(config):
     )
     cg.add(var.set_sample_interval(config[CONF_SAMPLE_INTERVAL]))
     cg.add(var.set_replay_topic(config[CONF_REPLAY_TOPIC]))
+    if gate_id := config.get(CONF_RECORD_WHEN):
+        gate = await cg.get_variable(gate_id)
+        cg.add(var.set_record_when(gate))
     if ack_topic := config.get(CONF_ACK_TOPIC):
         cg.add(var.set_ack_topic(ack_topic))
     if status_topic := config.get(CONF_STATUS_TOPIC):

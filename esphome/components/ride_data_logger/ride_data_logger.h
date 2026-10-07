@@ -52,6 +52,11 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   void set_ack_timeout(uint32_t ms) { ack_timeout_ms_ = ms; }
   void set_max_log_bytes(uint32_t n) { max_log_bytes_ = n; }
   void set_time(time::RealTimeClock *time) { time_ = time; }
+  void set_record_when(binary_sensor::BinarySensor *b) { record_when_ = b; }
+
+  // For a status LED: 0 = idle (bike not connected), 1 = recording to the card,
+  // 2 = problem (no usable card or writes failing).
+  uint8_t led_state() const;
 
   void add_sensor(sensor::Sensor *s, const std::string &key);
   void add_binary_sensor(binary_sensor::BinarySensor *s, const std::string &key);
@@ -76,6 +81,8 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   std::string binary_sensor_keys_[MAX_BINARY_SENSORS];
   uint8_t binary_sensor_count_{0};
 
+  binary_sensor::BinarySensor *record_when_{nullptr};  // optional gate, see take_sample_()
+  bool was_recording_{false};
   uint32_t sample_interval_ms_{2000};
   uint32_t last_sample_ms_{0};
   time::RealTimeClock *time_{nullptr};
@@ -86,6 +93,7 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   uint32_t boot_id_{0};
   uint32_t next_seq_{0};
   uint32_t write_failures_{0};
+  bool last_write_ok_{true};
 
   void take_sample_();
 

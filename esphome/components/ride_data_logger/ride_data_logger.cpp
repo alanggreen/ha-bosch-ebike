@@ -153,6 +153,14 @@ void RideDataLogger::dump_config() {
   ESP_LOGCONFIG(TAG, "  Sensors: %u, binary_sensors: %u", sensor_count_, binary_sensor_count_);
 }
 
+uint8_t RideDataLogger::led_state() const {
+  if (store_ == nullptr || !last_write_ok_)
+    return 2;
+  if (record_when_ != nullptr && !(record_when_->has_state() && record_when_->state))
+    return 0;
+  return 1;
+}
+
 uint32_t RideDataLogger::current_epoch_() {
   if (time_ == nullptr)
     return 0;
@@ -163,6 +171,16 @@ uint32_t RideDataLogger::current_epoch_() {
 // ---- Sampling ------------------------------------------------------------
 
 void RideDataLogger::take_sample_() {
+  // Optional gate: record only while the gate sensor (e.g. "eBike Connected") is
+  // on. One extra sample is taken right after it turns off, so the end of the
+  // ride is captured.
+  if (record_when_ != nullptr) {
+    const bool on = record_when_->has_state() && record_when_->state;
+    const bool trailing = !on && was_recording_;
+    was_recording_ = on;
+    if (!on && !trailing)
+      return;
+  }
   RideRecord rec{};
   rec.boot = boot_id_;
   rec.seq = next_seq_++;
@@ -195,7 +213,8 @@ void RideDataLogger::take_sample_() {
   // (service_send_) that only reads from the card, so a live sample can never
   // overtake older buffered ones, and a crash right after this line cannot
   // lose the sample.
-  if (!store_->append(rec)) {
+  last_write_ok_ = store_->append(rec);
+  if (!last_write_ok_) {
     // Do NOT publish it directly: it would arrive ahead of older, still
     // buffered records and the receiver would then discard those as stale.
     write_failures_++;

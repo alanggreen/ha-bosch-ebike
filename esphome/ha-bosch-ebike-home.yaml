@@ -169,6 +169,7 @@ ride_data_logger:
   miso_pin: GPIO19
   clk_pin: GPIO18
   time_id: sntp_time
+  record_when: connected_sensor   # only log while the bike is connected
   # Defaults shown for reference:
   # replay_topic: ebike-bridge-mobile/ride_log        # <node name>/ride_log
   # ack_topic: ebike-bridge-mobile/ride_log/ack
@@ -202,6 +203,29 @@ ride_data_logger:
       key: "diagnosis_active"
     - id: in_motion_sensor
       key: "in_motion"
+
+# Status LED (the blue LED on the ESP32 devkit, GPIO2):
+#   off               = bike not connected, nothing is being recorded
+#   short blink / 2 s = bike connected, samples are being written to the card
+#   fast flicker      = problem: no usable SD card, or card writes are failing
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: status_led_out
+
+interval:
+  - interval: 100ms
+    then:
+      - lambda: |-
+          static uint32_t tick = 0;
+          tick++;
+          bool on = false;
+          switch (id(ride_logger).led_state()) {
+            case 1: on = (tick % 20) < 2; break;   // 200 ms on, 1.8 s off
+            case 2: on = (tick % 2) == 0; break;   // 5 Hz flicker
+            default: on = false;
+          }
+          if (on) id(status_led_out).turn_on(); else id(status_led_out).turn_off();
 
 # Charge-time estimate: while charging, measure the charging rate (%/min) from
 # the rising SoC and extrapolate the remaining time to 80 % and to 100 %. Two
