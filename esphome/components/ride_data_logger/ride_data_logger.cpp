@@ -13,6 +13,7 @@
 
 #include <cinttypes>
 #include <cmath>
+#include <cstring>
 
 namespace esphome {
 namespace ride_data_logger {
@@ -102,10 +103,18 @@ void RideDataLogger::setup() {
   if (sd_mounted_) {
     store_ = new RideLogStore(LOG_DIR, max_log_bytes_);
     if (!store_->open()) {
-      ESP_LOGE(TAG, "Could not open the ride log directory %s", LOG_DIR);
+      ESP_LOGW(TAG, "Could not create the folder %s (errno %d: %s) - trying the card's root folder instead", LOG_DIR,
+               store_->last_errno(), strerror(store_->last_errno()));
       delete store_;
-      store_ = nullptr;
-      sd_mounted_ = false;
+      // Segment files are 8.3 named, so they can live in the root of the card too.
+      store_ = new RideLogStore(MOUNT_POINT, max_log_bytes_);
+      if (!store_->open()) {
+        ESP_LOGE(TAG, "Could not use the SD card for the ride log (errno %d: %s) - is it write protected or read-only?",
+                 store_->last_errno(), strerror(store_->last_errno()));
+        delete store_;
+        store_ = nullptr;
+        sd_mounted_ = false;
+      }
     }
   }
   if (!sd_mounted_) {
@@ -232,6 +241,7 @@ void RideDataLogger::service_send_() {
   if (connected != was_connected_) {
     was_connected_ = connected;
     store_->rewind_to_acked();
+    window_limit_ = 1;
     last_progress_ms_ = now;
     if (connected)
       ESP_LOGI(TAG, "MQTT up - %" PRIu32 " record(s) waiting to be acknowledged", store_->unacked_records());
@@ -244,18 +254,22 @@ void RideDataLogger::service_send_() {
     ESP_LOGW(TAG, "No acknowledgement for %" PRIu32 " ms - resending %u in-flight record(s)", ack_timeout_ms_,
              (unsigned) store_->in_flight());
     store_->rewind_to_acked();
+    window_limit_ = 1;
     last_progress_ms_ = now;
   }
 
   uint8_t sent = 0;
   RideRecord rec;
-  while (sent < max_replay_per_loop_ && store_->in_flight() < max_unacked_ && store_->peek_next(rec)) {
+  while (sent < max_replay_per_loop_ && store_->in_flight() < window_limit_ && store_->peek_next(rec)) {
+    const uint32_t t0 = millis();
     if (!publish_record_(rec))
       break;  // not accepted by the client; same record is offered again next loop
     if (store_->in_flight() == 0)
       last_progress_ms_ = now;
     store_->mark_sent(rec);
     sent++;
+    if (millis() - t0 > 50)
+      break;  // the network is slow right now; do not stall the main loop further
   }
 
   if (now - last_status_ms_ > 30000) {
@@ -267,8 +281,10 @@ void RideDataLogger::service_send_() {
 void RideDataLogger::on_ack_(JsonObject root) {
   if (store_ == nullptr || !root["boot"].is<uint32_t>() || !root["seq"].is<uint32_t>())
     return;
-  if (store_->ack(root["boot"].as<uint32_t>(), root["seq"].as<uint32_t>()))
+  if (store_->ack(root["boot"].as<uint32_t>(), root["seq"].as<uint32_t>())) {
     last_progress_ms_ = millis();
+    window_limit_ = window_limit_ >= max_unacked_ / 2 ? max_unacked_ : window_limit_ * 2;
+  }
 }
 
 void RideDataLogger::publish_status_() {

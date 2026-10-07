@@ -10,7 +10,7 @@
 # power zone, the rolling and weekly best 5-minute power, the VO2max estimate,
 # time-in-zone for today, and the bridge's SD-card backlog sensors.
 #
-# Sensor names assume the ESP bridge entities are called sensor.BRIDGE_ebike_rider_power
+# Sensor names assume the ESP bridge entities are called sensor.ebike_bridge_mobile_ebike_rider_power
 # etc. (see esphome/example-bridge-mobile.yaml). Change them here if yours differ.
 
 input_number:
@@ -52,7 +52,7 @@ sensor:
   - platform: statistics
     name: eBike Power 5 min
     unique_id: ebike_power_5min
-    entity_id: sensor.BRIDGE_ebike_rider_power
+    entity_id: sensor.ebike_bridge_mobile_ebike_rider_power
     state_characteristic: mean
     max_age:
       minutes: 5
@@ -107,7 +107,7 @@ template:
       - name: eBike Power Zone
         unique_id: ebike_power_zone
         state: >
-          {% set p = states('sensor.BRIDGE_ebike_rider_power') | float(none) %}
+          {% set p = states('sensor.ebike_bridge_mobile_ebike_rider_power') | float(none) %}
           {% set f = states('input_number.ebike_rider_ftp') | float(150) %}
           {% if p is none %}unknown{% else %}
           {% set x = p / f %}

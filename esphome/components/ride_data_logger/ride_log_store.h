@@ -85,8 +85,10 @@ class RideLogStore {
   // Scan the card, restore the acknowledged position, start a FRESH write
   // segment (so a torn tail from a previous crash is never appended to).
   bool open() {
-    if (mkdir(dir_.c_str(), 0775) != 0 && errno != EEXIST)
+    if (mkdir(dir_.c_str(), 0775) != 0 && errno != EEXIST) {
+      last_errno_ = errno;
       return false;
+    }
 
     uint32_t lo = 0, hi = 0;
     bool any = false;
@@ -239,6 +241,7 @@ class RideLogStore {
     return true;
   }
 
+  int last_errno() const { return last_errno_; }  // set when open() fails
   uint32_t unacked_records() const { return unacked_; }
   uint32_t dropped() const { return dropped_; }
   uint32_t corrupt() const { return corrupt_; }
@@ -402,6 +405,7 @@ class RideLogStore {
   uint32_t dropped_{0};
   uint32_t corrupt_{0};
   uint32_t meta_gen_{0};
+  int last_errno_{0};
   Pos ack_{};
   Pos send_{};
   std::deque<InFlight> window_;

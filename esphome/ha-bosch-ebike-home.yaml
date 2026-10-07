@@ -95,6 +95,11 @@ mqtt:
   username: !secret mqtt_user
   password: !secret mqtt_password
   discovery: true
+  # Publish through the MQTT task instead of blocking the main loop. Needed here:
+  # on a slow link (e.g. through a VPN) a blocking publish stalled the loop for
+  # seconds and caused watchdog reboots. If you see reconnects about every 30 s,
+  # remove this line (that is what it did on an ESP32-C3).
+  idf_send_async: true
   discovery_prefix: homeassistant
   # Let only the WiFi reboot_timeout below trigger reboots, not MQTT.
   reboot_timeout: 0s

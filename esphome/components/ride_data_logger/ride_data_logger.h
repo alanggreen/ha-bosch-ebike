@@ -96,6 +96,10 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   std::string status_topic_;
   uint8_t max_replay_per_loop_{4};
   uint16_t max_unacked_{16};
+  // Slow start: send 1 record at a time, double after each ack up to max_unacked_,
+  // fall back to 1 on an ack timeout. Keeps a missing/slow receiver from
+  // triggering resend floods that stall the main loop.
+  uint16_t window_limit_{1};
   uint32_t ack_timeout_ms_{10000};
   uint32_t max_log_bytes_{16 * 1024 * 1024};
 

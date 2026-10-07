@@ -69,7 +69,7 @@ views:
       - type: vertical-stack
         cards:
           - type: custom:button-card
-            entity: sensor.BRIDGE_ebike_rider_power
+            entity: sensor.ebike_bridge_mobile_ebike_rider_power
             name: Rider power
             show_name: true
             show_state: true
@@ -125,23 +125,23 @@ views:
             cards:
               - type: custom:button-card
                 template: ebike_field
-                entity: sensor.BRIDGE_ebike_speed
+                entity: sensor.ebike_bridge_mobile_ebike_speed
                 name: Speed
                 state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : parseFloat(entity.state).toFixed(1) + ' km/h'; ]]]"
               - type: custom:button-card
                 template: ebike_field
-                entity: sensor.BRIDGE_ebike_cadence
+                entity: sensor.ebike_bridge_mobile_ebike_cadence
                 name: Cadence
                 state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' rpm'; ]]]"
           - type: custom:button-card
             template: ebike_field
-            entity: sensor.BRIDGE_ebike_battery_soc_live
+            entity: sensor.ebike_bridge_mobile_ebike_battery_soc_live
             name: Battery
             state_display: "[[[ return isNaN(parseFloat(entity.state)) ? '--' : Math.round(entity.state) + ' %'; ]]]"
           - type: entities
             show_header_toggle: false
             entities:
-              - entity: binary_sensor.BRIDGE_ebike_connected
+              - entity: binary_sensor.ebike_bridge_mobile_ebike_connected
                 name: Bike linked
               - entity: sensor.ebike_log_waiting_to_upload
                 name: Waiting to upload from card
@@ -175,7 +175,7 @@ views:
           - min: 0
             decimals: 0
         series:
-          - entity: sensor.BRIDGE_ebike_rider_power
+          - entity: sensor.ebike_bridge_mobile_ebike_rider_power
             name: Power
             type: area
             curve: stepline
@@ -319,22 +319,22 @@ views:
             max: 100
             decimals: 0
         series:
-          - entity: sensor.BRIDGE_ebike_rider_power
+          - entity: sensor.ebike_bridge_mobile_ebike_rider_power
             name: Power (W)
             yaxis_id: power
             color: "#f2efe6"
             stroke_width: 2
-          - entity: sensor.BRIDGE_ebike_speed
+          - entity: sensor.ebike_bridge_mobile_ebike_speed
             name: Speed (km/h)
             yaxis_id: speed
             color: "#8ab17d"
             stroke_width: 2
-          - entity: sensor.BRIDGE_ebike_cadence
+          - entity: sensor.ebike_bridge_mobile_ebike_cadence
             name: Cadence (rpm)
             yaxis_id: cadence
             color: "#f4a259"
             stroke_width: 2
-          - entity: sensor.BRIDGE_ebike_battery_soc_live
+          - entity: sensor.ebike_bridge_mobile_ebike_battery_soc_live
             name: Battery (%)
             yaxis_id: soc
             color: "#78c2ff"

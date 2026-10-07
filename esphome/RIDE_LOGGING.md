@@ -50,7 +50,7 @@ ride_data_logger:
   replay_topic: ...         # default "<node name>/ride_log"
   ack_topic: ...            # default "<replay_topic>/ack"
   status_topic: ...         # default "<replay_topic>/status"
-  max_unacked: 16           # records sent but not yet acknowledged
+  max_unacked: 16           # max records in flight; starts at 1, doubles per ack (slow start)
   ack_timeout: 10s          # no ack for this long -> resend
   max_replay_per_loop: 4
   max_log_bytes: 16777216   # ring-buffer size on the card

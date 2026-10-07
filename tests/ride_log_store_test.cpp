@@ -243,7 +243,16 @@ static void test_ack_position_survives_numbering_after_full_drain() {
   CHECK(ids.size() == 1 && ids[0] == std::make_pair(2u, 0u));
 }
 
+static void test_open_failure_reports_errno() {
+  RideLogStore s("/nonexistent-parent/rlog", 1 << 20);
+  CHECK(!s.open());
+  CHECK(s.last_errno() != 0);
+  RideRecord r{};
+  CHECK(!s.append(r));  // an unopened store never pretends to write
+}
+
 int main() {
+  test_open_failure_reports_errno();
   test_basic_send_ack_cleanup();
   test_resume_after_reboot_resends_only_unacked();
   test_order_across_segments_and_boots();
