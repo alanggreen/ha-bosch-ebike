@@ -169,6 +169,9 @@ wireguard:
 # router assigns the peer an IP inside the home subnet, so an active tunnel
 # there would create a routing conflict.
 text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset reason"
   - platform: wifi_info
     ssid:
       name: "WLAN SSID"
@@ -257,6 +260,11 @@ ride_data_logger:
       key: "diagnosis_active"
     - id: in_motion_sensor
       key: "in_motion"
+
+# Why did the ESP last restart? (brown-out, watchdog, crash, power-on ...)
+# Shown in Home Assistant as "Reset reason" and in the log at every boot.
+debug:
+  update_interval: 60s
 
 # Status LED (the blue LED on the ESP32 devkit, GPIO2):
 #   tiny tick / 5 s   = powered and idle: bike not connected, nothing is being recorded

@@ -220,6 +220,11 @@ ride_data_logger:
     - id: in_motion_sensor
       key: "in_motion"
 
+# Why did the ESP last restart? (brown-out, watchdog, crash, power-on ...)
+# Shown in Home Assistant as "Reset reason" and in the log at every boot.
+debug:
+  update_interval: 60s
+
 # Status LED (the blue LED on the ESP32 devkit, GPIO2):
 #   tiny tick / 5 s   = powered and idle: bike not connected, nothing is being recorded
 #   (completely dark  = no power / dead board)
@@ -260,6 +265,11 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: '0'
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset reason"
 
 sensor:
   - platform: bosch_ebike_ldi
