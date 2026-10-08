@@ -85,6 +85,8 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
 
   binary_sensor::BinarySensor *record_when_{nullptr};  // optional gate, see take_sample_()
   bool was_recording_{false};
+  // True once a record carrying a real wall-clock time was written in this boot.
+  bool clock_anchored_{false};
   uint32_t sample_interval_ms_{2000};
   uint32_t last_sample_ms_{0};
   time::RealTimeClock *time_{nullptr};

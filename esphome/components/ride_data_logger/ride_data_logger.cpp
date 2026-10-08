@@ -221,11 +221,22 @@ void RideDataLogger::take_sample_() {
   // Optional gate: record only while the gate sensor (e.g. "eBike Connected") is
   // on. One extra sample is taken right after it turns off, so the end of the
   // ride is captured.
+  //
+  // Exception: the first time the clock becomes valid in this boot, always write
+  // one "clock anchor" record, even with the bike off. Samples taken before the
+  // clock was known carry only the uptime; this record (epoch + uptime) lets the
+  // receiver work out the real time of every earlier sample of this boot, which
+  // is what happens when the ESP rides away from WiFi and syncs the time at home.
+  bool force_anchor = false;
+  if (!clock_anchored_ && current_epoch_() != 0) {
+    clock_anchored_ = true;
+    force_anchor = true;
+  }
   if (record_when_ != nullptr) {
     const bool on = record_when_->has_state() && record_when_->state;
     const bool trailing = !on && was_recording_;
     was_recording_ = on;
-    if (!on && !trailing)
+    if (!on && !trailing && !force_anchor)
       return;
   }
   RideRecord rec{};
