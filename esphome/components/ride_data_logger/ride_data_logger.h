@@ -14,6 +14,7 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/mqtt/custom_mqtt_device.h"
 #include "esphome/components/time/real_time_clock.h"
+#include "esphome/components/wifi/wifi_component.h"
 
 #include "ride_log_store.h"
 #include "sdmmc_cmd.h"
@@ -98,6 +99,10 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   uint32_t next_seq_{0};
   uint32_t write_failures_{0};
   bool last_write_ok_{true};
+  // Slowest SD append seen since boot and how many took over 200 ms; a stalled
+  // write blocks the main loop, and the task watchdog restarts the ESP after 5 s.
+  uint32_t max_append_ms_{0};
+  uint32_t slow_appends_{0};
 
   void take_sample_();
 

@@ -271,7 +271,15 @@ void RideDataLogger::take_sample_() {
   // (service_send_) that only reads from the card, so a live sample can never
   // overtake older buffered ones, and a crash right after this line cannot
   // lose the sample.
+  const uint32_t t_append = millis();
   last_write_ok_ = store_->append(rec);
+  const uint32_t append_ms = millis() - t_append;
+  if (append_ms > max_append_ms_)
+    max_append_ms_ = append_ms;
+  if (append_ms > 200) {
+    slow_appends_++;
+    ESP_LOGW(TAG, "Slow SD write: %" PRIu32 " ms (slowest so far %" PRIu32 " ms)", append_ms, max_append_ms_);
+  }
   if (!last_write_ok_) {
     // Do NOT publish it directly: it would arrive ahead of older, still
     // buffered records and the receiver would then discard those as stale.
@@ -310,7 +318,11 @@ bool RideDataLogger::publish_record_(const RideRecord &rec) {
 
 void RideDataLogger::service_send_() {
   const uint32_t now = millis();
-  const bool connected = this->is_connected();
+  // "MQTT connected" stays true for a while after the WiFi is gone, and a send then
+  // blocks until the network gives up, which stalls the main loop and trips the task
+  // watchdog. So only send while the WiFi link itself is up.
+  const bool wifi_up = wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_connected();
+  const bool connected = wifi_up && this->is_connected();
 
   // Any transition invalidates what we believe is "in flight": QoS1 messages
   // and acks may have been lost with the old session. Resending from the last
@@ -405,6 +417,8 @@ void RideDataLogger::publish_status_() {
     root["dropped"] = dropped;
     root["corrupt"] = store_->corrupt();
     root["write_failures"] = write_failures_;
+    root["max_append_ms"] = max_append_ms_;
+    root["slow_appends"] = slow_appends_;
     root["used_bytes"] = store_->total_bytes();
   });
 }

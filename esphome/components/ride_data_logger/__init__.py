@@ -24,7 +24,7 @@ from esphome.const import CONF_BINARY_SENSORS, CONF_ID, CONF_KEY, CONF_SENSORS, 
 from esphome.core import CORE
 
 CODEOWNERS = ["@Xunil99"]
-DEPENDENCIES = ["esp32", "mqtt"]
+DEPENDENCIES = ["esp32", "mqtt", "wifi"]
 MULTI_CONF = False
 
 ride_data_logger_ns = cg.esphome_ns.namespace("ride_data_logger")
