@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -36,19 +37,20 @@ fun StatusScreen(ui: BridgeLink.Ui, now: Long, up: SyncEngine.Ui, actions: Statu
         Text("STATUS", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp))
         CountPlate(Board.count(ui, now, up))
         LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp).padding(top = 4.dp)) {
-            items(rows, key = { it.id }) { BoardRow(it) }
+            // No item keys on purpose: rows re-sort as links change, and a key would keep the old scroll position.
+            items(rows) { BoardRow(it) }
             item { Box(Modifier.fillMaxWidth().topRule(ink)) }
         }
         Row(Modifier.fillMaxWidth().topRule(ink).padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (Board.linkUp(ui, now)) {
-                Button(actions.setClock, Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Set clock") }
-                OutlinedButton(actions.disconnect, Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Disconnect") }
+                Button(actions.setClock, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Set clock") }
+                OutlinedButton(actions.disconnect, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Disconnect") }
             } else if (busy) {
-                Button({}, Modifier.weight(1f).heightIn(min = 48.dp), enabled = false) { Text("Connecting") }
-                OutlinedButton(actions.disconnect, Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Cancel") }
+                Button({}, Modifier.weight(1f).heightIn(min = 48.dp), enabled = false, shape = RectangleShape) { Text("Connecting") }
+                OutlinedButton(actions.disconnect, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Cancel") }
             } else {
-                Button(actions.connect, Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Connect") }
-                OutlinedButton(actions.pair, Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Pair phone") }
+                Button(actions.connect, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Connect") }
+                OutlinedButton(actions.pair, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Pair phone") }
             }
         }
     }

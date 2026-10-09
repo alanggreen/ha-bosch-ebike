@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -62,6 +63,7 @@ fun SettingsScreen(current: Settings, up: SyncEngine.Ui, onSave: (Settings) -> U
                 saved = true
             },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            shape = RectangleShape,
             enabled = host.isNotBlank(),
         ) { Text("Save and connect") }
         Text("Running in the background", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
@@ -70,7 +72,7 @@ fun SettingsScreen(current: Settings, up: SyncEngine.Ui, onSave: (Settings) -> U
             else "Android may pause the link in a pocket. Allow background use so it keeps running during a ride.",
             style = MaterialTheme.typography.bodyMedium, color = soft,
         )
-        if (!batteryOk) Button(onClick = onBattery, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Allow background use") }
+        if (!batteryOk) Button(onClick = onBattery, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RectangleShape) { Text("Allow background use") }
         Text(
             when {
                 !current.configured -> "Not set up yet."
