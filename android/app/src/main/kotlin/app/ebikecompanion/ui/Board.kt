@@ -46,15 +46,17 @@ object Board {
                 if (ui.message.isNotEmpty()) ui.message else if (silent == null) "Tap Connect" else "Unreachable for $silent s",
             )
             return listOf(link) + listOf("bike" to "Bike", "sd" to "SD card", "clock" to "Clock", "ha" to "Home Assistant",
-                "backlog" to "Backlog", "drop" to "Dropped", "up" to "ESP32 uptime").map { unknown(it.first, it.second) } + upload(up)
+                "backlog" to "Backlog", "drop" to "Lost samples", "up" to "ESP32 uptime").map { unknown(it.first, it.second) } + upload(up)
         }
         val dropped = s.dropped > 0 || s.writeFailures > 0
         return listOf(
             BoardLine("link", "ESP32 bridge", MarkState.OK, "Connected", "Phone link encrypted"),
             if (s.bikeConnected) BoardLine("bike", "Bike", MarkState.OK, "Connected", if (s.recording) "Recording rides" else "Connected")
             else BoardLine("bike", "Bike", MarkState.OFF, "Off", "Waiting for the bike"),
-            if (s.sdOk) BoardLine("sd", "SD card", MarkState.OK, "OK", "${bytes(s.usedBytes)} on the card")
-            else BoardLine("sd", "SD card", MarkState.BAD, "Missing", "Rides are not being saved"),
+            // "sdOk" only says the card mounted at boot. logger state 2 means the last write was refused.
+            if (!s.sdOk) BoardLine("sd", "SD card", MarkState.BAD, "Missing", "Rides are not being saved")
+            else if (s.loggerState == 2) BoardLine("sd", "SD card", MarkState.BAD, "Not writing", "The card refuses writes: rides are not being saved")
+            else BoardLine("sd", "SD card", MarkState.OK, "OK", "${bytes(s.usedBytes)} on the card"),
             if (s.clockValid) BoardLine("clock", "Clock", MarkState.OK, "Set", "Records are dated")
             else BoardLine("clock", "Clock", MarkState.BAD, "Not set", "Records are undated"),
             if (s.mqttUp) BoardLine("ha", "Home Assistant", MarkState.OK, "Online", "Uploading as you ride")
@@ -62,8 +64,10 @@ object Board {
             if (s.unacked == 0L) BoardLine("backlog", "Backlog", MarkState.OK, "0 waiting", "All uploaded")
             else BoardLine("backlog", "Backlog", MarkState.WARN, "${s.unacked} waiting", "Uploads when back online"),
             upload(up),
-            if (!dropped) BoardLine("drop", "Dropped", MarkState.OK, "0 dropped", "0 write failures")
-            else BoardLine("drop", "Dropped", MarkState.BAD, "${s.dropped} dropped", "${s.writeFailures} write failures"),
+            if (!dropped) BoardLine("drop", "Lost samples", MarkState.OK, "0 lost", "Nothing refused or overwritten")
+            else BoardLine("drop", "Lost samples", MarkState.BAD,
+                if (s.writeFailures > 0) "${s.writeFailures} lost" else "${s.dropped} overwritten",
+                if (s.writeFailures > 0) "Samples the card refused to store" else "Oldest samples overwritten: the card was full"),
             BoardLine("up", "ESP32 uptime", MarkState.OK, uptime(s.uptimeMs), "Boot %08X".format(s.bootId)),
         )
     }
