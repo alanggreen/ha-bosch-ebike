@@ -110,7 +110,7 @@
     // Ride
     const b = E.banner(); $("banner").hidden = !b; $("bannerText").textContent = b; $("badge").hidden = !b;
     $("bikeLine").textContent = !s.link ? "Bridge not connected" : s.bike ? "Bike linked" : "Bike off";
-    const stale = !s.link; $("stale").hidden = !stale; $("stale").textContent = "No data for " + E.st.age + " s. Showing the last values.";
+    const stale = !s.link; $("stale").hidden = true;  // the red banner already says it
     $("ride").querySelector(".scroll").classList.toggle("dim", stale);
     setPower(Math.round(r.w)); setZone(E.zoneIndex(r.w));
     $("zoneName").textContent = stale ? "Last known value" : s.bike ? `Zone ${E.zoneIndex(r.w) + 1}, ${E.ZN[E.zoneIndex(r.w)]}` : "Not riding";

@@ -61,7 +61,7 @@
 
   function banner() {
     const s = st.s;
-    if (!s.link) return "Bridge lost. Numbers are not updating.";
+    if (!s.link) return `Bridge lost ${st.age} s. Last values shown.`;
     if (!s.sd) return "SD card missing. Rides are not being saved.";
     return "";
   }
