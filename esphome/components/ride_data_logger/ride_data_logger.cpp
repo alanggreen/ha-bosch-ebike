@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 
 #include <cinttypes>
+#include <sys/time.h>
 #include <cmath>
 #include <cstring>
 
@@ -182,6 +183,10 @@ void RideDataLogger::loop() {
   }
   if (store_ != nullptr)
     service_send_();
+#ifdef RIDE_LOGGER_PHONE_LINK
+  if (phone_link_ != nullptr)
+    service_phone_();
+#endif
 }
 
 void RideDataLogger::dump_config() {
@@ -292,6 +297,211 @@ void RideDataLogger::take_sample_() {
     }
   }
 }
+
+#ifdef RIDE_LOGGER_PHONE_LINK
+// ---- Android companion app -----------------------------------------------------
+// Wire formats (all little-endian) are documented in docs/app/PHONE_LINK_PROTOCOL.md.
+static void put_u32(uint8_t *b, uint32_t v) {
+  b[0] = (uint8_t) v;
+  b[1] = (uint8_t) (v >> 8);
+  b[2] = (uint8_t) (v >> 16);
+  b[3] = (uint8_t) (v >> 24);
+}
+static uint32_t get_u32(const uint8_t *b) {
+  return (uint32_t) b[0] | ((uint32_t) b[1] << 8) | ((uint32_t) b[2] << 16) | ((uint32_t) b[3] << 24);
+}
+
+enum PhoneCmd : uint8_t { CMD_SET_TIME = 1, CMD_SYNC_FROM = 2, CMD_ACK_UP_TO = 3, CMD_STOP_SYNC = 4, CMD_GET_STATUS = 5 };
+enum PhoneResult : uint8_t {
+  RES_OK = 0,
+  RES_UNKNOWN_CMD = 1,
+  RES_BAD_ARGS = 2,
+  RES_NO_CARD = 3,
+  RES_NOT_FOUND = 4,         // ACK_UP_TO: id not in the log (already released)
+  RES_FELL_BACK = 5,         // SYNC_FROM: id not found, streaming from the oldest unreleased record
+  RES_MTU_TOO_SMALL = 6,
+};
+
+void RideDataLogger::build_live_record_(RideRecord &rec) {
+  rec = RideRecord{};
+  rec.boot = boot_id_;
+  rec.seq = next_seq_;
+  rec.epoch = current_epoch_();
+  rec.uptime_ms = millis();
+  for (uint8_t i = 0; i < MAX_SENSORS; i++)
+    rec.values[i] = (i < sensor_count_ && sensors_[i] != nullptr && sensors_[i]->has_state()) ? sensors_[i]->state : NAN;
+  for (uint8_t i = 0; i < binary_sensor_count_; i++) {
+    if (binary_sensors_[i] != nullptr && binary_sensors_[i]->has_state()) {
+      rec.binary_known |= (1 << i);
+      if (binary_sensors_[i]->state)
+        rec.binary_state |= (1 << i);
+    }
+  }
+  ride_seal(rec);
+}
+
+size_t RideDataLogger::build_phone_status_(uint8_t *b) {
+  const bool wifi_up = wifi::global_wifi_component != nullptr && wifi::global_wifi_component->is_connected();
+  uint8_t flags = 0;
+  if (store_ != nullptr)
+    flags |= 0x01;  // SD log usable
+  if (current_epoch_() != 0)
+    flags |= 0x02;  // clock valid
+  if (phone_link_ != nullptr && phone_link_->bike_connected())
+    flags |= 0x04;  // bike connected
+  if (wifi_up)
+    flags |= 0x08;
+  if (wifi_up && this->is_connected())
+    flags |= 0x10;  // MQTT up
+  if (phone_syncing_)
+    flags |= 0x20;
+  if (led_state() == 1)
+    flags |= 0x40;  // recording
+  size_t i = 0;
+  b[i++] = 1;  // format version
+  b[i++] = flags;
+  b[i++] = led_state();
+  b[i++] = last_cmd_;
+  b[i++] = last_cmd_result_;
+  const uint32_t fields[9] = {boot_id_,
+                              next_seq_,
+                              store_ ? store_->unacked_records() : 0,
+                              store_ ? store_->dropped() : 0,
+                              write_failures_,
+                              max_append_ms_,
+                              store_ ? store_->total_bytes() : 0,
+                              (uint32_t) millis(),
+                              current_epoch_()};
+  for (uint32_t f : fields) {
+    put_u32(b + i, f);
+    i += 4;
+  }
+  return i;  // 41 bytes
+}
+
+void RideDataLogger::handle_phone_command_(const uint8_t *c, size_t n) {
+  uint8_t res = RES_OK;
+  switch (c[0]) {
+    case CMD_SET_TIME: {
+      const uint32_t e = n == 5 ? get_u32(c + 1) : 0;
+      if (n != 5 || e < 1577836800u || e > 4102444800u) {  // 2020-01-01 .. 2100-01-01
+        res = RES_BAD_ARGS;
+        break;
+      }
+      struct timeval tv;
+      tv.tv_sec = (time_t) e;
+      tv.tv_usec = 0;
+      settimeofday(&tv, nullptr);
+      ESP_LOGI(TAG, "Clock set by the phone: %" PRIu32, e);
+      break;
+    }
+    case CMD_SYNC_FROM: {
+      if (store_ == nullptr) {
+        res = RES_NO_CARD;
+        break;
+      }
+      if (n != 9) {
+        res = RES_BAD_ARGS;
+        break;
+      }
+      const bool found = store_->seek_after(get_u32(c + 1), get_u32(c + 5), phone_cursor_);
+      phone_syncing_ = true;
+      res = found ? RES_OK : RES_FELL_BACK;
+      ESP_LOGI(TAG, "Phone sync started (%s)", found ? "resuming" : "from the oldest unreleased record");
+      break;
+    }
+    case CMD_ACK_UP_TO: {
+      if (store_ == nullptr) {
+        res = RES_NO_CARD;
+        break;
+      }
+      if (n != 9) {
+        res = RES_BAD_ARGS;
+        break;
+      }
+      res = store_->ack_through(get_u32(c + 1), get_u32(c + 5)) ? RES_OK : RES_NOT_FOUND;
+      break;
+    }
+    case CMD_STOP_SYNC:
+      phone_syncing_ = false;
+      break;
+    case CMD_GET_STATUS:
+      break;
+    default:
+      res = RES_UNKNOWN_CMD;
+      break;
+  }
+  last_cmd_ = c[0];
+  last_cmd_result_ = res;
+  phone_status_dirty_ = true;
+}
+
+void RideDataLogger::service_phone_() {
+  const uint32_t now = millis();
+  const bosch_ebike_ldi::PhoneState st = phone_link_->phone_state();
+
+  uint8_t cmd[24];
+  size_t n;
+  while ((n = phone_link_->phone_pop_command(cmd, sizeof(cmd))) > 0)
+    handle_phone_command_(cmd, n);
+
+  if (!st.connected || !st.encrypted) {
+    phone_syncing_ = false;  // a new connection must ask again
+    return;
+  }
+
+  // Status: keep the readable copy fresh, and notify when asked/changed.
+  if (phone_status_dirty_ || now - last_phone_status_ms_ >= 1000) {
+    uint8_t buf[48];
+    const size_t len = build_phone_status_(buf);
+    phone_link_->phone_set_status(buf, len);
+    if (st.sub_status && phone_link_->phone_notify(bosch_ebike_ldi::PHONE_CHR_STATUS, buf, len)) {
+      phone_status_dirty_ = false;
+      last_phone_status_ms_ = now;
+    } else if (!st.sub_status) {
+      phone_status_dirty_ = false;
+      last_phone_status_ms_ = now;
+    }
+  }
+
+  // Live data: the current sample in the same 56-byte record format as the log.
+  if (st.sub_live && now - last_phone_live_ms_ >= 1000) {
+    RideRecord rec;
+    build_live_record_(rec);
+    if (phone_link_->phone_notify(bosch_ebike_ldi::PHONE_CHR_LIVE, reinterpret_cast<const uint8_t *>(&rec),
+                                  sizeof(rec)))
+      last_phone_live_ms_ = now;
+  }
+
+  // Record stream: [count u8][count x 56-byte records]; count 0 = caught up (end of sync).
+  if (phone_syncing_ && st.sub_log && store_ != nullptr) {
+    const int payload = st.mtu > 3 ? st.mtu - 3 : 20;
+    int per = (payload - 1) / (int) sizeof(RideRecord);
+    if (per < 1) {
+      last_cmd_result_ = RES_MTU_TOO_SMALL;
+      phone_status_dirty_ = true;
+      phone_syncing_ = false;
+      return;
+    }
+    if (per > 4)
+      per = 4;
+    const RideLogStore::Pos before = phone_cursor_;
+    RideRecord recs[4];
+    const int got = store_->read_batch(phone_cursor_, recs, per);
+    uint8_t pkt[1 + 4 * sizeof(RideRecord)];
+    pkt[0] = (uint8_t) got;
+    memcpy(pkt + 1, recs, (size_t) got * sizeof(RideRecord));
+    const size_t len = 1 + (size_t) got * sizeof(RideRecord);
+    if (!phone_link_->phone_notify(bosch_ebike_ldi::PHONE_CHR_LOG, pkt, len)) {
+      phone_cursor_ = before;  // not sent: read the same records again next time
+    } else if (got == 0) {
+      phone_syncing_ = false;
+      phone_status_dirty_ = true;
+      ESP_LOGI(TAG, "Phone sync complete");
+    }
+  }
+}
+#endif  // RIDE_LOGGER_PHONE_LINK
 
 // ---- Acknowledged replay -------------------------------------------------
 

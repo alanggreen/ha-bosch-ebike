@@ -62,7 +62,7 @@ esp32:
       CONFIG_BTDM_CTRL_MODE_BLE_ONLY: y
       CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY: n
       CONFIG_BTDM_CTRL_MODE_BTDM: n
-      CONFIG_BT_NIMBLE_MAX_CONNECTIONS: "1"
+      CONFIG_BT_NIMBLE_MAX_CONNECTIONS: "2"  # bike + phone
       CONFIG_BT_NIMBLE_ROLE_PERIPHERAL: y
       CONFIG_BT_NIMBLE_ROLE_BROADCASTER: y
       CONFIG_BT_NIMBLE_ROLE_CENTRAL: y
@@ -203,6 +203,7 @@ external_components:
 
 bosch_ebike_ldi:
   id: ebike_bridge
+  phone_link: true  # GATT service for the Android app (press "eBike Pair phone" once)
   device_name: "HA eBike Bridge"
 
 # --- Ride data logging while offline ----------------------------------------
@@ -223,6 +224,7 @@ bosch_ebike_ldi:
 # (input only). Card must be FAT32.
 ride_data_logger:
   id: ride_logger
+  phone_link: ebike_bridge
   cs_pin: GPIO5
   mosi_pin: GPIO23
   miso_pin: GPIO19
@@ -459,6 +461,14 @@ button:
     on_press:
       then:
         - lambda: 'id(ebike_bridge).start_pairing();'
+  # Register the Android app: the next new device that connects within ~5 min
+  # becomes the phone. Closes the bike pairing window.
+  - platform: template
+    name: "eBike Pair phone"
+    icon: mdi:cellphone-link
+    on_press:
+      then:
+        - lambda: 'id(ebike_bridge).start_phone_pairing();'
   - platform: template
     name: "eBike Clear Bonding"
     on_press:

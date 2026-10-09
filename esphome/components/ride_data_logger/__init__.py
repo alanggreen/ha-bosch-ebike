@@ -37,6 +37,7 @@ CONF_CLK_PIN = "clk_pin"
 CONF_SAMPLE_INTERVAL = "sample_interval"
 CONF_REPLAY_TOPIC = "replay_topic"
 CONF_RECORD_WHEN = "record_when"
+CONF_PHONE_LINK = "phone_link"
 CONF_ACK_SECRET = "ack_secret"
 CONF_ACK_TOPIC = "ack_topic"
 CONF_STATUS_TOPIC = "status_topic"
@@ -106,6 +107,9 @@ CONFIG_SCHEMA = cv.All(
             # "mac" = HMAC-SHA256(secret, "<boot>:<seq>") as 64 hex chars. Set the same
             # value as `ack_secret` of offline_backfill in Home Assistant, or on neither.
             cv.Optional(CONF_ACK_SECRET): cv.string_strict,
+            # Id of the bosch_ebike_ldi component (with `phone_link: true`): serves live data,
+            # status, the record stream and commands to the Android companion app.
+            cv.Optional(CONF_PHONE_LINK): cv.use_id(cg.Component),
             cv.Optional(CONF_ACK_TOPIC): cv.subscribe_topic,
             cv.Optional(CONF_STATUS_TOPIC): cv.publish_topic,
             cv.Optional(CONF_MAX_REPLAY_PER_LOOP, default=4): cv.int_range(min=1, max=50),
@@ -150,6 +154,10 @@ async def to_code(config):
     if gate_id := config.get(CONF_RECORD_WHEN):
         gate = await cg.get_variable(gate_id)
         cg.add(var.set_record_when(gate))
+    if phone_id := config.get(CONF_PHONE_LINK):
+        phone_var = await cg.get_variable(phone_id)
+        cg.add(var.set_phone_link(phone_var))
+        cg.add_define("RIDE_LOGGER_PHONE_LINK")
     if ack_secret := config.get(CONF_ACK_SECRET):
         cg.add(var.set_ack_secret(ack_secret))
     if ack_topic := config.get(CONF_ACK_TOPIC):

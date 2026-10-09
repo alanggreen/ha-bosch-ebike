@@ -4,6 +4,8 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/application.h"
+#include "esphome/core/preferences.h"
+#include <cstring>
 
 extern "C" {
 #include "esp_bt.h"
@@ -99,14 +101,14 @@ static void log_hex(const char *prefix, const uint8_t *buf, size_t len) {
 // NimBLE's ble_hs_adv_fields struct cannot represent solicitation, so we build
 // the byte sequence by hand and pass it to ble_gap_adv_set_data().
 static int build_adv_payload(uint8_t *buf, size_t buf_len, size_t *out_len,
-                             const std::string &name, bool pairing) {
+                             const std::string &name, bool pairing, bool discoverable) {
   size_t pos = 0;
   // 1) Flags. Pairing window: LE General Discoverable + BR/EDR Not Supported
   //    (0x06) so a Flow app can find and add the bridge. Private reconnect
   //    mode: BR/EDR Not Supported only (0x04) -> NOT discoverable, so other
   //    users' Flow apps do not list it.
   if (pos + 3 > buf_len) return -1;
-  buf[pos++] = 0x02; buf[pos++] = 0x01; buf[pos++] = (uint8_t) (pairing ? 0x06 : 0x04);
+  buf[pos++] = 0x02; buf[pos++] = 0x01; buf[pos++] = (uint8_t) (discoverable ? 0x06 : 0x04);
 
   // 2) Appearance (LE): Cycling generic = 0x0480
   if (pos + 4 > buf_len) return -1;
@@ -196,6 +198,31 @@ static uint32_t g_last_adv_watchdog_ms = 0;
 static constexpr uint32_t ADV_REARM_INTERVAL_MS = 300000;  // 5 min
 static uint32_t g_last_adv_rearm_ms = 0;
 
+// ---- Phone link state (see start_phone_pairing / phone_handle_gap_event) -----
+// The phone is a second BLE central that connects to us. It is told apart from the
+// bike by its identity address, which is stored the first time a new device connects
+// while the phone pairing window is open.
+static bool g_phone_link_enabled = false;
+static uint32_t g_phone_pairing_until_ms = 0;
+static ble_addr_t g_phone_addr;
+static bool g_phone_addr_valid = false;
+static volatile bool g_phone_addr_dirty = false;
+
+struct PhoneConn {
+  uint16_t handle{BLE_HS_CONN_HANDLE_NONE};
+  bool encrypted{false};
+  bool registering{false};  // paired during the phone pairing window, address not stored yet
+  uint16_t mtu{23};
+  bool sub_live{false};
+  bool sub_status{false};
+  bool sub_log{false};
+};
+static PhoneConn g_phone;
+
+static bool phone_pairing_open() {
+  return g_phone_pairing_until_ms != 0 && (int32_t) (g_phone_pairing_until_ms - millis()) > 0;
+}
+
 // Upper bound for reading bonded peers (well above NimBLE's default 3 bonds).
 static constexpr int MAX_BOND_PROBE = 8;
 
@@ -217,7 +244,9 @@ static void apply_bond_whitelist() {
 }
 
 static int start_advertising() {
-  const bool pairing = pairing_window_open();
+  const bool bike_pairing = pairing_window_open();
+  const bool phone_pairing = g_phone_link_enabled && phone_pairing_open();
+  const bool pairing = bike_pairing || phone_pairing;
 
   // Outside a pairing window, advertise only if the master switch is on AND a
   // bike is bonded (private reconnect). Otherwise stay fully silent. A pairing
@@ -230,7 +259,7 @@ static int start_advertising() {
 
   uint8_t adv_buf[31];
   size_t adv_len = 0;
-  if (build_adv_payload(adv_buf, sizeof(adv_buf), &adv_len, g_device_name_cache, pairing) != 0) {
+  if (build_adv_payload(adv_buf, sizeof(adv_buf), &adv_len, g_device_name_cache, bike_pairing, pairing) != 0) {
     ESP_LOGE(TAG, "adv payload build failed");
     return -1;
   }
@@ -265,8 +294,9 @@ static int start_advertising() {
     // been left alone for the whole interval.
     g_last_adv_rearm_ms = millis();
     ESP_LOGI(TAG, "Advertising started (%s), name='%s'",
-             pairing ? "PAIRING: discoverable + solicitation eb20"
-                     : "private reconnect: non-discoverable, whitelist, no solicitation",
+             bike_pairing ? "PAIRING: discoverable + solicitation eb20"
+                          : (phone_pairing ? "PHONE PAIRING: discoverable, no solicitation"
+                                           : "private reconnect: non-discoverable, whitelist, no solicitation"),
              g_device_name_cache.c_str());
   }
   return rc;
@@ -305,8 +335,233 @@ static void ble_host_task(void *param) {
   nimble_port_freertos_deinit();
 }
 
+// ============================================================================
+// Phone link: protected GATT service for the Android companion app
+// ============================================================================
+// Service 7f3c1a00-5b2e-4f6a-9d1c-3e8b2a4c6d00; characteristics ...01 live
+// (notify), ...02 status (read + notify), ...03 log (notify), ...04 command
+// (write). Reads and writes need an encrypted (bonded) link; notifications are
+// only ever sent to the registered phone over an encrypted link. See
+// docs/app/PHONE_LINK_PROTOCOL.md.
+static const uint8_t PHONE_UUID_BASE[16] = {0x00, 0x6d, 0x4c, 0x2a, 0x8b, 0x3e, 0x1c, 0x9d,
+                                            0x6a, 0x4f, 0x2e, 0x5b, 0x00, 0x1a, 0x3c, 0x7f};
+static ble_uuid128_t g_uuid_svc, g_uuid_live, g_uuid_status, g_uuid_log, g_uuid_cmd;
+static uint16_t g_val_live = 0, g_val_status = 0, g_val_log = 0, g_val_cmd = 0;
+static ble_gatt_chr_def g_phone_chrs[5];
+static ble_gatt_svc_def g_phone_svcs[2];
+
+static portMUX_TYPE g_phone_mux = portMUX_INITIALIZER_UNLOCKED;
+static constexpr int PHONE_CMDQ_N = 6;
+static constexpr size_t PHONE_CMD_MAX = 24;
+static uint8_t g_cmdq[PHONE_CMDQ_N][PHONE_CMD_MAX];
+static uint8_t g_cmdq_len[PHONE_CMDQ_N];
+static int g_cmdq_head = 0, g_cmdq_tail = 0;
+static uint8_t g_phone_status[64];
+static size_t g_phone_status_len = 0;
+
+static bool addr_equal(const ble_addr_t &a, const ble_addr_t &b) { return ble_addr_cmp(&a, &b) == 0; }
+
+static bool peer_is_bonded(const ble_addr_t &peer) {
+  ble_addr_t addrs[MAX_BOND_PROBE];
+  int num = 0;
+  if (ble_store_util_bonded_peers(addrs, &num, MAX_BOND_PROBE) != 0)
+    return false;
+  for (int i = 0; i < num; i++)
+    if (addr_equal(addrs[i], peer))
+      return true;
+  return false;
+}
+
+// Does this connection belong to the phone? True for the live phone handle, or (before
+// the CONNECT event arrives on a bond-resume) for a registered phone's address.
+static bool is_phone_handle(uint16_t handle) {
+  if (!g_phone_link_enabled)
+    return false;
+  if (handle != BLE_HS_CONN_HANDLE_NONE && handle == g_phone.handle)
+    return true;
+  if (!g_phone_addr_valid)
+    return false;
+  struct ble_gap_conn_desc desc;
+  return ble_gap_conn_find(handle, &desc) == 0 && addr_equal(desc.peer_id_addr, g_phone_addr);
+}
+
+static int phone_gatt_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt,
+                             void *arg) {
+  if (!is_phone_handle(conn_handle))
+    return BLE_ATT_ERR_INSUFFICIENT_AUTHOR;  // the bike has no business here
+  if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR && attr_handle == g_val_status) {
+    uint8_t buf[64];
+    size_t len;
+    portENTER_CRITICAL(&g_phone_mux);
+    len = g_phone_status_len;
+    memcpy(buf, g_phone_status, len);
+    portEXIT_CRITICAL(&g_phone_mux);
+    return os_mbuf_append(ctxt->om, buf, len) == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+  }
+  if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR && attr_handle == g_val_cmd) {
+    uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+    if (len == 0 || len > PHONE_CMD_MAX)
+      return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    uint8_t buf[PHONE_CMD_MAX];
+    if (os_mbuf_copydata(ctxt->om, 0, len, buf) != 0)
+      return BLE_ATT_ERR_UNLIKELY;
+    bool queued = false;
+    portENTER_CRITICAL(&g_phone_mux);
+    int next = (g_cmdq_head + 1) % PHONE_CMDQ_N;
+    if (next != g_cmdq_tail) {
+      memcpy(g_cmdq[g_cmdq_head], buf, len);
+      g_cmdq_len[g_cmdq_head] = (uint8_t) len;
+      g_cmdq_head = next;
+      queued = true;
+    }
+    portEXIT_CRITICAL(&g_phone_mux);
+    return queued ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+  }
+  return BLE_ATT_ERR_UNLIKELY;
+}
+
+static void make_phone_uuid(ble_uuid128_t &u, uint8_t index) {
+  u.u.type = BLE_UUID_TYPE_128;
+  memcpy(u.value, PHONE_UUID_BASE, 16);
+  u.value[0] = index;
+}
+
+static void init_phone_gatt_defs() {
+  memset(g_phone_chrs, 0, sizeof(g_phone_chrs));
+  memset(g_phone_svcs, 0, sizeof(g_phone_svcs));
+  make_phone_uuid(g_uuid_svc, 0x00);
+  make_phone_uuid(g_uuid_live, 0x01);
+  make_phone_uuid(g_uuid_status, 0x02);
+  make_phone_uuid(g_uuid_log, 0x03);
+  make_phone_uuid(g_uuid_cmd, 0x04);
+  g_phone_chrs[0].uuid = &g_uuid_live.u;
+  g_phone_chrs[0].access_cb = phone_gatt_access;
+  g_phone_chrs[0].flags = BLE_GATT_CHR_F_NOTIFY;
+  g_phone_chrs[0].val_handle = &g_val_live;
+  g_phone_chrs[1].uuid = &g_uuid_status.u;
+  g_phone_chrs[1].access_cb = phone_gatt_access;
+  g_phone_chrs[1].flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_NOTIFY;
+  g_phone_chrs[1].val_handle = &g_val_status;
+  g_phone_chrs[2].uuid = &g_uuid_log.u;
+  g_phone_chrs[2].access_cb = phone_gatt_access;
+  g_phone_chrs[2].flags = BLE_GATT_CHR_F_NOTIFY;
+  g_phone_chrs[2].val_handle = &g_val_log;
+  g_phone_chrs[3].uuid = &g_uuid_cmd.u;
+  g_phone_chrs[3].access_cb = phone_gatt_access;
+  g_phone_chrs[3].flags = BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_WRITE_ENC;
+  g_phone_chrs[3].val_handle = &g_val_cmd;
+  // g_phone_chrs[4] stays zero: end marker
+  g_phone_svcs[0].type = BLE_GATT_SVC_TYPE_PRIMARY;
+  g_phone_svcs[0].uuid = &g_uuid_svc.u;
+  g_phone_svcs[0].characteristics = g_phone_chrs;
+}
+
+// Handle a GAP event that belongs to the phone. Returns true if handled (result in *ret).
+// Events of the bike connection are NEVER handled here, so the existing bike path is
+// untouched.
+static bool phone_handle_gap_event(struct ble_gap_event *event, int *ret) {
+  if (!g_phone_link_enabled)
+    return false;
+  switch (event->type) {
+    case BLE_GAP_EVENT_CONNECT: {
+      if (event->connect.status != 0)
+        return false;
+      const uint16_t handle = event->connect.conn_handle;
+      struct ble_gap_conn_desc desc;
+      if (ble_gap_conn_find(handle, &desc) != 0)
+        return false;
+      const bool known_phone = g_phone_addr_valid && addr_equal(desc.peer_id_addr, g_phone_addr);
+      const bool new_phone = !known_phone && phone_pairing_open() && !peer_is_bonded(desc.peer_id_addr);
+      if (!known_phone && !new_phone)
+        return false;  // this is the bike
+      if (g_phone.handle != handle) {  // not already adopted by an early ENC_CHANGE
+        g_phone = PhoneConn{};
+        g_phone.handle = handle;
+      }
+      g_phone.registering = new_phone;
+      ESP_LOGI(TAG, "Phone connected (handle %u)%s", handle, new_phone ? " - registering" : "");
+      ble_gap_set_data_len(handle, 251, 2120);
+      // Keep advertising so the bike can still (re)connect while the phone is connected.
+      if (!g_instance || !g_instance->bike_connected())
+        start_advertising();
+      *ret = 0;
+      return true;
+    }
+    case BLE_GAP_EVENT_DISCONNECT: {
+      if (event->disconnect.conn.conn_handle != g_phone.handle)
+        return false;
+      ESP_LOGW(TAG, "Phone disconnected reason=0x%02x", event->disconnect.reason);
+      g_phone = PhoneConn{};
+      start_advertising();
+      *ret = 0;
+      return true;
+    }
+    case BLE_GAP_EVENT_ENC_CHANGE: {
+      const uint16_t handle = event->enc_change.conn_handle;
+      if (!is_phone_handle(handle))
+        return false;
+      if (g_phone.handle != handle) {
+        g_phone = PhoneConn{};
+        g_phone.handle = handle;
+      }
+      if (event->enc_change.status == 0) {
+        g_phone.encrypted = true;
+        if (g_phone.registering) {
+          struct ble_gap_conn_desc desc;
+          if (ble_gap_conn_find(handle, &desc) == 0) {
+            g_phone_addr = desc.peer_id_addr;
+            g_phone_addr_valid = true;
+            g_phone_addr_dirty = true;
+            g_phone.registering = false;
+            g_phone_pairing_until_ms = 0;
+            ESP_LOGI(TAG, "Phone paired and registered");
+          }
+        }
+      } else {
+        ESP_LOGW(TAG, "Phone pairing failed (status %d)", event->enc_change.status);
+      }
+      *ret = 0;
+      return true;
+    }
+    case BLE_GAP_EVENT_MTU: {
+      if (event->mtu.conn_handle != g_phone.handle)
+        return false;
+      g_phone.mtu = event->mtu.value;
+      ESP_LOGI(TAG, "Phone MTU %u", event->mtu.value);
+      *ret = 0;
+      return true;
+    }
+    case BLE_GAP_EVENT_SUBSCRIBE: {
+      if (event->subscribe.conn_handle != g_phone.handle)
+        return false;
+      const bool on = event->subscribe.cur_notify != 0;
+      if (event->subscribe.attr_handle == g_val_live)
+        g_phone.sub_live = on;
+      else if (event->subscribe.attr_handle == g_val_status)
+        g_phone.sub_status = on;
+      else if (event->subscribe.attr_handle == g_val_log)
+        g_phone.sub_log = on;
+      *ret = 0;
+      return true;
+    }
+    case BLE_GAP_EVENT_DATA_LEN_CHG: {
+      if (event->data_len_chg.conn_handle != g_phone.handle)
+        return false;
+      *ret = 0;
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 // ---- GAP event handler ------------------------------------------------------
 static int gap_event_handler(struct ble_gap_event *event, void *arg) {
+  {
+    int phone_ret = 0;
+    if (phone_handle_gap_event(event, &phone_ret))
+      return phone_ret;
+  }
   switch (event->type) {
     case BLE_GAP_EVENT_CONNECT: {
       ESP_LOGI(TAG, "GAP CONNECT status=%d conn_handle=%u",
@@ -321,6 +576,9 @@ static int gap_event_handler(struct ble_gap_event *event, void *arg) {
 
         // Workaround for LDI-001: bike doesn't initiate DLE. We do.
         ble_gap_set_data_len(event->connect.conn_handle, 251, 2120);
+        // With the phone link on, keep advertising so the phone can connect too.
+        if (g_phone_link_enabled && (g_phone_addr_valid || phone_pairing_open()))
+          start_advertising();
       } else {
         // Connection failed – resume advertising.
         start_advertising();
@@ -638,6 +896,32 @@ void BoschEbikeLdi::setup() {
   ble_svc_gatt_init();
   ble_store_config_init();  // NVS-backed bond store
 
+  g_phone_link_enabled = this->phone_link_enabled_;
+  if (g_phone_link_enabled) {
+    struct PhoneAddrPref {
+      uint8_t valid;
+      uint8_t type;
+      uint8_t val[6];
+    } pref{};
+    this->phone_pref_ = global_preferences->make_preference<PhoneAddrPref>(0x50484F4E);
+    if (this->phone_pref_.load(&pref) && pref.valid) {
+      g_phone_addr.type = pref.type;
+      memcpy(g_phone_addr.val, pref.val, 6);
+      g_phone_addr_valid = true;
+      ESP_LOGI(TAG, "Phone link enabled; a phone is registered");
+    } else {
+      ESP_LOGI(TAG, "Phone link enabled; no phone registered yet (press 'Pair phone')");
+    }
+    init_phone_gatt_defs();
+    int grc = ble_gatts_count_cfg(g_phone_svcs);
+    if (grc == 0)
+      grc = ble_gatts_add_svcs(g_phone_svcs);
+    if (grc != 0) {
+      ESP_LOGE(TAG, "Phone GATT service registration failed: %d (phone link disabled)", grc);
+      g_phone_link_enabled = false;
+    }
+  }
+
   nimble_port_freertos_init(ble_host_task);
 }
 
@@ -656,6 +940,30 @@ void BoschEbikeLdi::loop() {
   if (this->data_dirty_) {
     this->data_dirty_ = false;
     this->publish_decoded_();
+  }
+
+  if (g_phone_link_enabled) {
+    if (g_phone_addr_dirty) {
+      g_phone_addr_dirty = false;
+      struct PhoneAddrPref {
+        uint8_t valid;
+        uint8_t type;
+        uint8_t val[6];
+      } pref{};
+      pref.valid = g_phone_addr_valid ? 1 : 0;
+      pref.type = g_phone_addr.type;
+      memcpy(pref.val, g_phone_addr.val, 6);
+      this->phone_pref_.save(&pref);
+      global_preferences->sync();
+    }
+    if (g_phone_pairing_until_ms != 0 && (int32_t) (g_phone_pairing_until_ms - millis()) <= 0) {
+      g_phone_pairing_until_ms = 0;
+      ESP_LOGI(TAG, "Phone pairing window closed");
+      if (g_ble_synced && g_phone.handle == BLE_HS_CONN_HANDLE_NONE && !this->last_published_connected_) {
+        ble_gap_adv_stop();
+        start_advertising();
+      }
+    }
   }
 
   // Pairing window auto-expiry: once it lapses and we are not connected, drop
@@ -793,6 +1101,10 @@ void BoschEbikeLdi::on_live_data_notify(const uint8_t *data, size_t len) {
 void BoschEbikeLdi::clear_bonding() {
   ESP_LOGW(TAG, "Clearing all bonded peers from NVS");
   ble_store_clear();
+  if (g_phone_link_enabled) {
+    g_phone_addr_valid = false;
+    g_phone_addr_dirty = true;
+  }
 }
 
 void BoschEbikeLdi::start_pairing() {
@@ -824,6 +1136,91 @@ void BoschEbikeLdi::set_advertising_enabled(bool enabled) {
 }
 
 bool BoschEbikeLdi::advertising_enabled() { return g_adv_enabled; }
+
+// ---- Phone link public API ---------------------------------------------------------
+void BoschEbikeLdi::start_phone_pairing() {
+  if (!g_phone_link_enabled) {
+    ESP_LOGW(TAG, "start_phone_pairing: phone_link is not enabled in the config");
+    return;
+  }
+  g_phone_pairing_until_ms = millis() + PAIRING_WINDOW_MS;
+  g_pairing_until_ms = 0;  // close the bike window: a new device now is the phone
+  ESP_LOGI(TAG, "Phone pairing window opened for %u min - connect from the app / nRF Connect and bond",
+           (unsigned) (PAIRING_WINDOW_MS / 60000));
+  if (g_ble_synced && !this->last_published_connected_) {
+    ble_gap_adv_stop();
+    start_advertising();
+  } else if (g_ble_synced) {
+    start_advertising();  // bike connected: advertise for the phone in parallel
+  }
+}
+
+bool BoschEbikeLdi::is_phone_pairing() { return g_phone_link_enabled && phone_pairing_open(); }
+
+bool BoschEbikeLdi::phone_registered() { return g_phone_link_enabled && g_phone_addr_valid; }
+
+PhoneState BoschEbikeLdi::phone_state() {
+  PhoneState st;
+  st.connected = g_phone.handle != BLE_HS_CONN_HANDLE_NONE;
+  st.encrypted = g_phone.encrypted;
+  st.mtu = g_phone.mtu;
+  st.sub_live = g_phone.sub_live;
+  st.sub_status = g_phone.sub_status;
+  st.sub_log = g_phone.sub_log;
+  return st;
+}
+
+bool BoschEbikeLdi::phone_notify(PhoneChar chr, const uint8_t *data, size_t len) {
+  if (!g_phone_link_enabled || g_phone.handle == BLE_HS_CONN_HANDLE_NONE || !g_phone.encrypted)
+    return false;
+  if (g_phone.registering || len == 0 || len + 3 > g_phone.mtu)
+    return false;
+  uint16_t val_handle;
+  bool subscribed;
+  switch (chr) {
+    case PHONE_CHR_LIVE:
+      val_handle = g_val_live;
+      subscribed = g_phone.sub_live;
+      break;
+    case PHONE_CHR_STATUS:
+      val_handle = g_val_status;
+      subscribed = g_phone.sub_status;
+      break;
+    default:
+      val_handle = g_val_log;
+      subscribed = g_phone.sub_log;
+      break;
+  }
+  if (!subscribed)
+    return false;
+  struct os_mbuf *om = ble_hs_mbuf_from_flat(data, (uint16_t) len);
+  if (om == nullptr)
+    return false;
+  return ble_gatts_notify_custom(g_phone.handle, val_handle, om) == 0;  // consumes om
+}
+
+size_t BoschEbikeLdi::phone_pop_command(uint8_t *buf, size_t max) {
+  size_t len = 0;
+  portENTER_CRITICAL(&g_phone_mux);
+  if (g_cmdq_tail != g_cmdq_head) {
+    len = g_cmdq_len[g_cmdq_tail];
+    if (len > max)
+      len = max;
+    memcpy(buf, g_cmdq[g_cmdq_tail], len);
+    g_cmdq_tail = (g_cmdq_tail + 1) % PHONE_CMDQ_N;
+  }
+  portEXIT_CRITICAL(&g_phone_mux);
+  return len;
+}
+
+void BoschEbikeLdi::phone_set_status(const uint8_t *data, size_t len) {
+  if (len > sizeof(g_phone_status))
+    len = sizeof(g_phone_status);
+  portENTER_CRITICAL(&g_phone_mux);
+  memcpy(g_phone_status, data, len);
+  g_phone_status_len = len;
+  portEXIT_CRITICAL(&g_phone_mux);
+}
 
 }  // namespace bosch_ebike_ldi
 }  // namespace esphome

@@ -3,6 +3,7 @@
 #ifdef USE_ESP32
 
 #include "esphome/core/component.h"
+#include "esphome/core/preferences.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
 #include "livedata_decoder.h"
@@ -15,6 +16,19 @@ namespace bosch_ebike_ldi {
 extern const uint8_t LDI_SERVICE_UUID128[16];
 extern const uint8_t LDI_LIVE_DATA_CHR_UUID128[16];
 static constexpr uint16_t LDI_APPEARANCE_CYCLING = 0x0480;
+
+// Characteristics of the phone service that the data side may notify on.
+enum PhoneChar : uint8_t { PHONE_CHR_LIVE = 0, PHONE_CHR_STATUS = 1, PHONE_CHR_LOG = 2 };
+
+// Snapshot of the phone connection (values are updated from the Bluetooth host task).
+struct PhoneState {
+  bool connected{false};
+  bool encrypted{false};
+  uint16_t mtu{23};
+  bool sub_live{false};
+  bool sub_status{false};
+  bool sub_log{false};
+};
 
 class BoschEbikeLdi : public Component {
  public:
@@ -63,8 +77,30 @@ class BoschEbikeLdi : public Component {
   void set_advertising_enabled(bool enabled);
   bool advertising_enabled();
 
+  // ---- Phone link (Android companion app), enabled with `phone_link: true` ----
+  void set_phone_link_enabled(bool enabled) { phone_link_enabled_ = enabled; }
+  bool phone_link_enabled() const { return phone_link_enabled_; }
+  // Open a 5 minute window in which the NEXT new device that connects is registered
+  // as the phone. Closes the bike pairing window. Exposed as an HA button.
+  void start_phone_pairing();
+  bool is_phone_pairing();
+  // True once a phone has been paired and registered (survives reboots).
+  bool phone_registered();
+  PhoneState phone_state();
+  // Send one notification to the (encrypted, subscribed) phone. Main loop only.
+  bool phone_notify(PhoneChar chr, const uint8_t *data, size_t len);
+  // Next command written by the phone, 0 if none. Main loop only.
+  size_t phone_pop_command(uint8_t *buf, size_t max);
+  // Bytes returned when the phone reads the status characteristic.
+  void phone_set_status(const uint8_t *data, size_t len);
+  // Latest values from the bike and whether the bike is connected.
+  const LiveData &latest() const { return latest_; }
+  bool bike_connected() const { return last_published_connected_; }
+
  protected:
   std::string device_name_{"HA eBike Bridge"};
+  bool phone_link_enabled_{false};
+  ESPPreferenceObject phone_pref_;
 
   // Connection state plumbing
   bool pending_connected_state_{false};

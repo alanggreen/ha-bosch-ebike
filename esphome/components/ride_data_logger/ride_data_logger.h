@@ -17,6 +17,9 @@
 #include "esphome/components/wifi/wifi_component.h"
 
 #include "ride_log_store.h"
+#ifdef RIDE_LOGGER_PHONE_LINK
+#include "esphome/components/bosch_ebike_ldi/bosch_ebike_ldi.h"
+#endif
 #include "sdmmc_cmd.h"
 
 #include <cstdint>
@@ -54,6 +57,9 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   void set_ack_timeout(uint32_t ms) { ack_timeout_ms_ = ms; }
   void set_max_log_bytes(uint32_t n) { max_log_bytes_ = n; }
   void set_time(time::RealTimeClock *time) { time_ = time; }
+#ifdef RIDE_LOGGER_PHONE_LINK
+  void set_phone_link(bosch_ebike_ldi::BoschEbikeLdi *ldi) { phone_link_ = ldi; }
+#endif
   void set_record_when(binary_sensor::BinarySensor *b) { record_when_ = b; }
 
   // For a status LED: 0 = idle (bike not connected), 1 = recording to the card,
@@ -125,6 +131,22 @@ class RideDataLogger : public Component, public mqtt::CustomMQTTDevice {
   uint32_t last_progress_ms_{0};
   uint32_t last_status_ms_{0};
   uint32_t last_warn_dropped_{0};
+
+#ifdef RIDE_LOGGER_PHONE_LINK
+  // ---- Android companion app (see docs/app/PHONE_LINK_PROTOCOL.md) ----
+  bosch_ebike_ldi::BoschEbikeLdi *phone_link_{nullptr};
+  RideLogStore::Pos phone_cursor_{};
+  bool phone_syncing_{false};
+  bool phone_status_dirty_{true};
+  uint8_t last_cmd_{0};
+  uint8_t last_cmd_result_{0};
+  uint32_t last_phone_live_ms_{0};
+  uint32_t last_phone_status_ms_{0};
+  void service_phone_();
+  void handle_phone_command_(const uint8_t *cmd, size_t len);
+  size_t build_phone_status_(uint8_t *out);
+  void build_live_record_(RideRecord &rec);
+#endif
 
   void service_send_();
   void publish_status_();

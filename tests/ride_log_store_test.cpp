@@ -251,8 +251,83 @@ static void test_open_failure_reports_errno() {
   CHECK(!s.append(r));  // an unopened store never pretends to write
 }
 
+static void test_phone_sync_reads_without_moving_the_mqtt_cursor() {
+  RideLogStore s(fresh_dir(), 1 << 22);
+  CHECK(s.open());
+  uint32_t total = RideLogStore::RECORDS_PER_SEGMENT + 40;  // crosses a segment boundary
+  for (uint32_t i = 0; i < total; i++)
+    s.append(make(5, i));
+  RideLogStore::Pos cur;
+  CHECK(s.seek_after(0, 0, cur));  // from the oldest unreleased record
+  RideRecord buf[16];
+  uint32_t seen = 0;
+  for (;;) {
+    int n = s.read_batch(cur, buf, 16);
+    if (n == 0)
+      break;
+    for (int i = 0; i < n; i++)
+      CHECK(buf[i].seq == seen + (uint32_t) i);  // in order, nothing skipped
+    seen += (uint32_t) n;
+  }
+  CHECK(seen == total);
+  CHECK(s.unacked_records() == total);  // reading is not releasing
+  CHECK(drain(s).size() == total);      // MQTT sender is unaffected
+}
+
+static void test_phone_resume_after_a_known_id() {
+  RideLogStore s(fresh_dir(), 1 << 20);
+  CHECK(s.open());
+  for (uint32_t i = 0; i < 30; i++)
+    s.append(make(2, i));
+  RideLogStore::Pos cur;
+  CHECK(s.seek_after(2, 9, cur));  // "I have everything up to seq 9"
+  RideRecord buf[64];
+  int n = s.read_batch(cur, buf, 64);
+  CHECK(n == 20 && buf[0].seq == 10 && buf[19].seq == 29);
+  CHECK(!s.seek_after(2, 999, cur));  // unknown id: falls back to the oldest unreleased
+  CHECK(s.read_batch(cur, buf, 64) == 30 && buf[0].seq == 0);
+}
+
+static void test_ack_through_releases_exactly_that_much_and_is_idempotent() {
+  std::string dir = fresh_dir();
+  {
+    RideLogStore s(dir, 1 << 22);
+    CHECK(s.open());
+    uint32_t total = RideLogStore::RECORDS_PER_SEGMENT * 2 + 25;
+    for (uint32_t i = 0; i < total; i++)
+      s.append(make(8, i));
+    CHECK(s.ack_through(8, RideLogStore::RECORDS_PER_SEGMENT + 9));  // inside the 2nd segment
+    CHECK(s.unacked_records() == total - (RideLogStore::RECORDS_PER_SEGMENT + 10));
+    CHECK(!s.ack_through(8, 5));  // older id: already released, no effect
+    CHECK(s.unacked_records() == total - (RideLogStore::RECORDS_PER_SEGMENT + 10));
+    auto ids = drain(s);  // the MQTT sender continues exactly after the released part
+    CHECK(!ids.empty() && ids.front() == std::make_pair(8u, RideLogStore::RECORDS_PER_SEGMENT + 10));
+  }
+  RideLogStore s2(dir, 1 << 22);  // survives a restart
+  CHECK(s2.open());
+  auto ids = drain(s2);
+  CHECK(!ids.empty() && ids.front() == std::make_pair(8u, RideLogStore::RECORDS_PER_SEGMENT + 10));
+}
+
+static void test_ack_through_clears_the_mqtt_inflight_window() {
+  RideLogStore s(fresh_dir(), 1 << 20);
+  CHECK(s.open());
+  for (uint32_t i = 0; i < 12; i++)
+    s.append(make(4, i));
+  drain(s, 8);  // 8 in flight over MQTT
+  CHECK(s.in_flight() == 8);
+  CHECK(s.ack_through(4, 5));  // the phone path acks 0..5
+  CHECK(s.in_flight() == 2);   // 6 and 7 remain in flight
+  CHECK(s.ack(4, 7));          // the MQTT path can still ack the rest
+  CHECK(s.in_flight() == 0);
+}
+
 int main() {
   test_open_failure_reports_errno();
+  test_phone_sync_reads_without_moving_the_mqtt_cursor();
+  test_phone_resume_after_a_known_id();
+  test_ack_through_releases_exactly_that_much_and_is_idempotent();
+  test_ack_through_clears_the_mqtt_inflight_window();
   test_basic_send_ack_cleanup();
   test_resume_after_reboot_resends_only_unacked();
   test_order_across_segments_and_boots();

@@ -28,11 +28,15 @@ bosch_ebike_ldi_ns = cg.esphome_ns.namespace("bosch_ebike_ldi")
 BoschEbikeLdi = bosch_ebike_ldi_ns.class_("BoschEbikeLdi", cg.Component)
 
 CONF_DEVICE_NAME = "device_name"
+CONF_PHONE_LINK = "phone_link"
 
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(BoschEbikeLdi),
         cv.Optional(CONF_DEVICE_NAME, default="HA eBike Bridge"): cv.string,
+        # Second Bluetooth connection for the Android companion app: a protected
+        # GATT service (live data, status, record stream, commands). Off by default.
+        cv.Optional(CONF_PHONE_LINK, default=False): cv.boolean,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -41,6 +45,7 @@ async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     cg.add(var.set_device_name(config[CONF_DEVICE_NAME]))
+    cg.add(var.set_phone_link_enabled(config[CONF_PHONE_LINK]))
 
     # ESP-IDF only - NimBLE is the host stack we depend on
     cg.add_build_flag("-DBOSCH_EBIKE_LDI_NIMBLE")
@@ -63,7 +68,7 @@ async def to_code(config):
     add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ENABLED", True)
     add_idf_sdkconfig_option("CONFIG_BT_BLUEDROID_ENABLED", False)
     add_idf_sdkconfig_option("CONFIG_BT_CONTROLLER_ENABLED", True)
-    add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_MAX_CONNECTIONS", 1)
+    add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_MAX_CONNECTIONS", 2 if config[CONF_PHONE_LINK] else 1)
     add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ROLE_PERIPHERAL", True)
     add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ROLE_BROADCASTER", True)
     add_idf_sdkconfig_option("CONFIG_BT_NIMBLE_ROLE_CENTRAL", True)

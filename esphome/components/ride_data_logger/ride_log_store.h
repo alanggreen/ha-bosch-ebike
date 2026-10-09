@@ -267,6 +267,67 @@ class RideLogStore {
   }
 
   int last_errno() const { return last_errno_; }  // set when open() fails
+  // ---- phone sync (independent of the MQTT send cursor) --------------------
+  // The phone reads the same log with its own cursor and later tells us which
+  // records Home Assistant has confirmed. Nothing here moves the MQTT cursor
+  // except ack_through(), which is the one place data is released.
+
+  // Position just after record (boot, seq), searching from the oldest unreleased
+  // record. (0, 0) means "from the oldest unreleased record". Returns false if
+  // the id is not in the log (already released, or from another card): the caller
+  // then gets the oldest unreleased position, which is always safe (resend).
+  bool seek_after(uint32_t boot, uint32_t seq, Pos &out) {
+    out = ack_;
+    if (boot == 0 && seq == 0)
+      return true;
+    Pos p = ack_;
+    RideRecord r;
+    while (read_one_(p, r)) {
+      if (r.boot == boot && r.seq == seq) {
+        out = p;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Read up to max valid records from `cursor`, advancing it. Returns how many
+  // were read (0 = nothing more to send right now).
+  int read_batch(Pos &cursor, RideRecord *out, int max) {
+    int n = 0;
+    while (n < max && read_one_(cursor, out[n]))
+      n++;
+    return n;
+  }
+
+  // Release everything up to and including record (boot, seq). Safe to call with
+  // an id that was already released (returns false, changes nothing).
+  bool ack_through(uint32_t boot, uint32_t seq) {
+    Pos p = ack_;
+    RideRecord r;
+    bool found = false;
+    while (read_one_(p, r)) {
+      if (r.boot == boot && r.seq == seq) {
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+      return false;
+    ack_ = p;
+    normalize_ack_();
+    // The MQTT sender may still hold in-flight entries that are now released.
+    while (!window_.empty() && !(window_.front().after.seg > ack_.seg ||
+                                 (window_.front().after.seg == ack_.seg && window_.front().after.idx > ack_.idx)))
+      window_.pop_front();
+    if (send_.seg < ack_.seg || (send_.seg == ack_.seg && send_.idx < ack_.idx))
+      send_ = ack_;
+    recount_all_();
+    save_meta_();
+    drop_finished_segments_();
+    return true;
+  }
+
   uint32_t unacked_records() const { return unacked_; }
   uint32_t dropped() const { return dropped_; }
   uint32_t corrupt() const { return corrupt_; }
@@ -286,6 +347,36 @@ class RideLogStore {
     uint32_t idx;
     uint32_t crc;
   };
+
+  // Read the next valid record at p across segment boundaries, advancing p.
+  // false = no more written data. Corrupt records are skipped (counted once).
+  bool read_one_(Pos &p, RideRecord &out) {
+    while (p.seg < write_seg_ || (p.seg == write_seg_ && p.idx < write_count_)) {
+      FILE *f = fopen(seg_path_(p.seg).c_str(), "rb");
+      if (f == nullptr) {
+        if (p.seg < write_seg_) {
+          p = Pos{p.seg + 1, 0};
+          continue;
+        }
+        return false;
+      }
+      bool seek_ok = fseek(f, (long) p.idx * (long) sizeof(RideRecord), SEEK_SET) == 0;
+      size_t got = seek_ok ? fread(&out, sizeof(out), 1, f) : 0;
+      fclose(f);
+      if (got != 1) {
+        if (p.seg < write_seg_) {
+          p = Pos{p.seg + 1, 0};
+          continue;
+        }
+        return false;
+      }
+      p.idx++;
+      if (!ride_valid(out))
+        continue;
+      return true;
+    }
+    return false;
+  }
 
   std::string seg_path_(uint32_t n) const {
     char buf[24];
@@ -325,6 +416,20 @@ class RideLogStore {
         c = c > ack_.idx ? c - ack_.idx : 0;
       unacked_ += c;
     }
+  }
+
+  // Records between the acknowledged position and the end of what has been written,
+  // including the segment currently being appended to (recount_() runs at start-up,
+  // when that segment is still empty, and deliberately leaves it out).
+  void recount_all_() {
+    uint32_t total = 0;
+    for (uint32_t sg = ack_.seg; sg <= write_seg_; sg++) {
+      uint32_t c = (sg == write_seg_) ? write_count_ : seg_records_(sg);
+      if (sg == ack_.seg)
+        c = c > ack_.idx ? c - ack_.idx : 0;
+      total += c;
+    }
+    unacked_ = total;
   }
 
   // Skip over positions that are at/after the end of an already-closed segment.
