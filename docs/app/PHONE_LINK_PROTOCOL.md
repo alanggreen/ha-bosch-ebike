@@ -17,8 +17,7 @@ Service UUID `7f3c1a00-5b2e-4f6a-9d1c-3e8b2a4c6d00`
 | `…6d03`     | log     | notify        | record stream, see below |
 | `…6d04`     | command | write         | commands, see below |
 
-Full UUIDs: `7f3c1a01-5b2e-4f6a-9d1c-3e8b2a4c6d00` for `…01`, and so on. (If nRF Connect shows
-different last bytes, the prefix `7f3c1a` + two digits identifies the characteristic.)
+Characteristic UUIDs: `7f3c1a00-5b2e-4f6a-9d1c-3e8b2a4c6d01` to `…6d04` (same as the service UUID except for the last byte).
 
 ## Registering the phone (once)
 

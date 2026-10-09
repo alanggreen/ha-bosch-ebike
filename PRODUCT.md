@@ -4,7 +4,9 @@
 
 ## Platform
 
-web
+android
+
+Second surface: the Home Assistant dashboard (web, see surface brief dashboard-mockups-analysis-html). The Android companion app (docs/app/ANDROID_APP_DESIGN.md) is the active design work; it is native Material 3 themed with the dashboard's world.
 
 ## Users
 One rider (owner of a Bosch eBike Smart System bike, EU account, Home Assistant at home on the LAN). Age 67, 61 kg. Reviews rides mostly afterwards on desktop or tablet; on the bike wants a phone-only live strip with no analysis. Other household members are not a confirmed audience.
@@ -39,3 +41,9 @@ Real entity names from `custom_components/ha_bosch_ebike/sensor.py` and `esphome
 
 ## Accessibility & Inclusion
 Rider is 67: large, high-contrast numerals and generous touch targets for the live view; readable in daylight on a handlebar-mounted phone.
+
+## Companion app (Android) - design facts
+- Same rider. Phone sits on a handlebar mount in portrait, glanced at in daylight, one-handed, screen kept on; also pocket/bag with audio alerts only.
+- Screens for the MVP: Status (ESP bridge link, bike, SD card, clock, Home Assistant, backlog, dropped/write failures, ESP uptime; actions Pair/Connect, Disconnect, Set clock) and Ride (rider power with zone bar, speed, cadence, battery, odometer, stale-data indication). Later: VO2max test, History, Settings.
+- A failing SD card or lost bridge must always be visible on every screen; the banner is never blocked by other UI.
+- Values come from the ESP32 phone link (docs/app/PHONE_LINK_PROTOCOL.md); nothing is invented client-side.
