@@ -18,6 +18,13 @@ esp_edge_z = 12.5;       // height above the floor of the highest point along th
 sd_edge_z = 5;           // same for the microSD module (its highest point along the edges)
 foam_t = 2;              // thickness of the self-adhesive foam strip you stick on the rib tips
 
+/* ---------------- MOUNTING HOLES IN THE FLOOR (measure the real ones and edit) ---------------- */
+mount_holes = [46, 24];  // centre-to-centre spacing: along the box length, across its width (mm)
+mount_d = 2.7;           // hole diameter: 2.7 suits M2.5 screws (use 3.4 for M3)
+mount_csk = 5.4;         // countersink diameter on the inside, so a flat-head screw sits flush with the floor
+mount_enable = true;
+sd_pad = 1.5;            // the microSD module rests on small pads so a metal screw head cannot touch its solder joints
+
 /* ---------------- DESIGN CHOICES ---------------- */
 clr = 0.4;               // fit clearance around each board
 gap = 9;                 // space between the two boards for the six wires
@@ -75,6 +82,11 @@ module base() {
       translate([(wall - 1.6)/2, (wall - 1.6)/2, 0]) rrect(ox - (wall - 1.6), oy - (wall - 1.6), 2, r_out - 0.6);
       translate([(wall + 1.6)/2, (wall + 1.6)/2, -0.1]) rrect(ox - (wall + 1.6), oy - (wall + 1.6), 3, r_out - 1.4);
     }
+    // mounting holes: countersunk from the inside so the heads are flush with the floor
+    if (mount_enable) for (sx = [-1, 1], sy = [-1, 1]) translate([ox/2 + sx*mount_holes[0]/2, oy/2 + sy*mount_holes[1]/2, -0.1]) {
+      cylinder(d = mount_d, h = floor_t + 0.3);
+      translate([0, 0, floor_t - (mount_csk - mount_d)/2 + 0.1]) cylinder(d1 = mount_d, d2 = mount_csk, h = (mount_csk - mount_d)/2 + 0.02);
+    }
     // pilot holes
     for (b = bosses) translate([wall + b[0], wall + b[1], oh - 14]) cylinder(d = screw_pilot, h = 15);
   }
@@ -83,6 +95,8 @@ module base() {
     cylinder(d = boss_d, h = ih - 1.3);
     translate([0, 0, ih - 1.3 - 14 + 0.02]) cylinder(d = screw_pilot, h = 15);
   }
+  // pads under the microSD module (the ESP32 already rests on its pins)
+  for (px = [sd_x0 + 3, sd_x1 - 9], py = [sd_y + 3, sd_y + sd[1] - 9]) translate([wall + px, wall + py, floor_t - 0.01]) cube([6, 6, sd_pad + 0.01]);
   // board guides
   translate([wall, wall, floor_t - 0.01]) {
     guide(esp_x, esp_y, esp[0], esp[1], 3.5);

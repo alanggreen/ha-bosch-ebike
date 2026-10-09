@@ -27,6 +27,20 @@ Things the model assumes that you should verify on your boards:
 - **`card_overhang`** (2.5 mm) is how far the microSD card sticks out of the module when fully inserted.
 - **`wire_clear`** is 12 mm for Dupont plugs on the pins. If you **solder** the six wires (recommended, see below) set it to 6 for a lower box.
 
+## Mounting holes in the floor
+
+Four countersunk holes in the floor, in a rectangle **46 mm along the box x 24 mm across**, centred on the box, for
+fixing it to a bracket or plate with screws.
+
+- **Read from photos, not measured.** The spacing (46 x 24 mm) is what you gave me; the hole size (2.7 mm, for M2.5
+  screws) is my estimate from the photos of the laser-cut plate. Measure the real holes and edit `mount_holes` and
+  `mount_d` at the top of the `.scad` file (use `mount_d = 3.4` for M3).
+- Flat-head (countersunk) screws sit **flush** with the floor, so they do not touch the boards. They still sit *under*
+  the boards, so **fix the box to its mount first, then drop the boards in**.
+- Use **nylon screws**, or put a layer of tape over the heads. A metal head under the boards could touch solder joints
+  (the microSD module also rests on four small 1.5 mm pads for this reason).
+- Set `mount_enable = false` to leave the floor plain.
+
 ## What it does about the SD card
 
 The boards sit in low rims so they cannot slide. The lid has ribs that press down on the board edges; stick a
