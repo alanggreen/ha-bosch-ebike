@@ -18,7 +18,7 @@ Files:
 |---|---|---|
 | ESP32 board | 52 x 29 x 13 mm (height from pin tips to the top of the USB socket) | pocket and lid height |
 | microSD module | 48 x 31 mm, 5 mm high | pocket |
-| Box outside | 78 x 74 x 27 mm (93 mm long with the strap tabs) | |
+| Box outside | 78 x 74 x 32 mm (93 mm long with the strap tabs) | |
 
 Things the model assumes that you should verify on your boards:
 - **The ESP32 sits on its header pins, with the pins pointing down.** `usb_center_z` (11 mm) is the height of the USB socket
@@ -27,19 +27,24 @@ Things the model assumes that you should verify on your boards:
 - **`card_overhang`** (2.5 mm) is how far the microSD card sticks out of the module when fully inserted.
 - **`wire_clear`** is 12 mm for Dupont plugs on the pins. If you **solder** the six wires (recommended, see below) set it to 6 for a lower box.
 
-## Mounting holes in the floor
+## Mounting the ESP32 board on the floor
 
-Four countersunk holes in the floor, in a rectangle **46 mm along the box x 24 mm across**, centred on the box, for
-fixing it to a bracket or plate with screws.
+The ESP32 board is screwed down through four holes. The pattern is **46 mm along the board x 24 mm across**, centred
+on the ESP32's area. Each hole has a **5 mm spacer** over it, so the board sits 5 mm above the floor of the box.
 
-- **Read from photos, not measured.** The spacing (46 x 24 mm) is what you gave me; the hole size (2.7 mm, for M2.5
-  screws) is my estimate from the photos of the laser-cut plate. Measure the real holes and edit `mount_holes` and
-  `mount_d` at the top of the `.scad` file (use `mount_d = 3.4` for M3).
-- Flat-head (countersunk) screws sit **flush** with the floor, so they do not touch the boards. They still sit *under*
-  the boards, so **fix the box to its mount first, then drop the boards in**.
-- Use **nylon screws**, or put a layer of tape over the heads. A metal head under the boards could touch solder joints
-  (the microSD module also rests on four small 1.5 mm pads for this reason).
-- Set `mount_enable = false` to leave the floor plain.
+- **Screws go in from underneath.** The head is countersunk into the bottom of the box (flush), the thread passes
+  up through the floor, the spacer and the board. Use **M2.5 flat-head (countersunk) screws, 14 to 16 mm long**, with a
+  nut on the top of the board (a nylon nut or a washer under it protects the PCB). Nylon screws are a good choice.
+- **Read from photos, not measured.** The 46 x 24 mm spacing is what you gave me; the hole diameter (2.7 mm, M2.5) is my
+  estimate. Measure your board's real holes and edit `mount_holes`, `mount_d` (3.4 for M3), and `mount_offset` if the
+  holes are not centred on the board. Spacer height is `esp_standoff` (5 mm), outside diameter `standoff_d` (6 mm).
+- **Check what is under your board.** Anything on the underside (header pins pointing down) must be shorter than the
+  5 mm spacer, or the board will not sit down. If your 13 mm height includes pins pointing down, enter the height
+  without them in `esp[2]`.
+- `mount_enable = false` leaves the floor plain, and the board then needs to be held by the rim and the lid only.
+- The microSD module has no mounting holes in this design: it rests on four small 1.5 mm pads and is held by its rim,
+  the lid ribs and the end wall.
+- `part="section"` renders a cut through the hole row (`preview_section.png`), to check the spacers.
 
 ## What it does about the SD card
 
