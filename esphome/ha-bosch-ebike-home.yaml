@@ -120,8 +120,10 @@ wifi:
   power_save_mode: none
   # With multiple networks, do NOT use fast_connect (it would only ever try
   # the first network and never fall back).
-  # Reboot if there is no WiFi at all for 5 min, to recover from hangs.
-  reboot_timeout: 5min
+  # NEVER reboot just because there is no WiFi. This bridge rides away from any
+  # network for hours; a reboot after 5 min would drop the bike connection, stop
+  # recording and lose the clock. (0s = disabled; the WiFi still reconnects by itself.)
+  reboot_timeout: 0s
 
   networks:
     - ssid: !secret wifi_ssid
