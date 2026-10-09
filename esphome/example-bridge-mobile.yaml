@@ -313,6 +313,15 @@ globals:
     initial_value: '0'
 
 sensor:
+  # Logger state for Home Assistant: 0 = idle (bike not connected), 1 = recording to the
+  # card, 2 = PROBLEM (no usable SD card, or card writes failing). Same as the LED.
+  - platform: template
+    name: "eBike Logger State"
+    id: logger_state
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: |-
+      return id(ride_logger).led_state();
   - platform: bosch_ebike_ldi
     bosch_ebike_ldi_id: ebike_bridge
     speed:

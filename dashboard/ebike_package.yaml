@@ -182,6 +182,18 @@ mqtt:
       value_template: "{{ value_json.unacked }}"
       unit_of_measurement: records
       state_class: measurement
+    - name: eBike Log Write Failures
+      unique_id: ebike_log_write_failures
+      state_topic: "ebike-bridge-mobile/ride_log/status"
+      value_template: "{{ value_json.write_failures }}"
+      unit_of_measurement: records
+      state_class: measurement
+    - name: eBike Log Slowest Write
+      unique_id: ebike_log_max_append_ms
+      state_topic: "ebike-bridge-mobile/ride_log/status"
+      value_template: "{{ value_json.max_append_ms }}"
+      unit_of_measurement: ms
+      state_class: measurement
     - name: eBike Log Samples Lost
       unique_id: ebike_log_dropped
       state_topic: "ebike-bridge-mobile/ride_log/status"
