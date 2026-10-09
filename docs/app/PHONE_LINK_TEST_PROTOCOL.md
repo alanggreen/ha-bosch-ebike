@@ -56,3 +56,20 @@ Do protocol 1 first. Pair the phone before the ride.
 | 2.15 | Power-cycle ESP, ride briefly | New boot id; bike reconnects; phone bond kept |
 
 Report pass/fail per row; for failures include the hex (most useful: 1.3 status, 2.1, 2.8).
+
+## Results so far (2026-10-09, nRF Connect on Android, firmware 3693b1a)
+
+Passed without the bike: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, and 1.13/1.14 in part
+(bond survives a disconnect and an ESP restart by OTA; reconnect works).
+Not yet run: 1.10 to 1.12 (sync / release), 1.15, 1.16, and all of protocol 2 (with the bike).
+
+Findings that changed the firmware:
+- Notifications (41-byte status, 56-byte records) were silently refused at the default 23-byte ATT MTU
+  because nRF Connect does not request a larger MTU. The ESP now starts the MTU exchange itself after
+  the link is encrypted.
+- Android reconnects to a bonded device from a resolvable private address, which the bike-only
+  whitelist cannot match (connection error 147/133 right after "Connect"). With a registered phone
+  that is not connected, the ESP now advertises connectable to anyone and drops every device that is
+  neither the bonded bike nor the registered phone; an unencrypted phone link is dropped after 15 s.
+  Not yet tested: a stranger device is dropped (1.15), and the bike still connecting while the
+  phone slot is open (2.1).
