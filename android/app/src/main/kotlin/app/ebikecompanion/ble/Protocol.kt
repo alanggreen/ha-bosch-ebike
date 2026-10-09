@@ -103,6 +103,21 @@ object Protocol {
         )
     }
 
+    /**
+     * The validated raw 56-byte blocks of a log packet, for storing as they are. Empty is the end marker; null means the
+     * packet is damaged (wrong size or a bad CRC), in which case none of it may be used.
+     */
+    fun splitLogPacket(b: ByteArray): List<ByteArray>? {
+        if (b.isEmpty()) return null
+        val n = b[0].toInt() and 0xFF
+        if (b.size < 1 + n * RECORD_SIZE) return null
+        return (0 until n).map {
+            val raw = b.copyOfRange(1 + it * RECORD_SIZE, 1 + (it + 1) * RECORD_SIZE)
+            if (parseRecord(raw) == null) return null
+            raw
+        }
+    }
+
     /** A log packet is [count u8][count x record]; count 0 means the card is caught up. */
     fun parseLogPacket(b: ByteArray): List<Record>? {
         if (b.isEmpty()) return null

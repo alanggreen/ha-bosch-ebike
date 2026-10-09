@@ -38,6 +38,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.ebikecompanion.ble.BridgeLink
+import app.ebikecompanion.sync.SyncEngine
+import app.ebikecompanion.ui.SettingsScreen
 import app.ebikecompanion.ui.Board
 import app.ebikecompanion.ui.EbikeTheme
 import app.ebikecompanion.ui.Palette
@@ -64,14 +66,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val link = (application as EbikeApp).link
-        setContent { EbikeTheme { App(link, ::withBluetooth) } }
+        val app = application as EbikeApp
+        setContent { EbikeTheme { App(app.link, app.engine, ::withBluetooth) } }
     }
 }
 
 @Composable
-private fun App(link: BridgeLink, withBluetooth: (() -> Unit) -> Unit) {
+private fun App(link: BridgeLink, engine: SyncEngine, withBluetooth: (() -> Unit) -> Unit) {
     val ui by link.ui.collectAsStateWithLifecycle()
+    val up by engine.ui.collectAsStateWithLifecycle()
+    val settings by engine.settings.collectAsStateWithLifecycle()
     val now by produceState(System.currentTimeMillis()) { while (true) { delay(1000); value = System.currentTimeMillis() } }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val fault = Board.banner(ui, now).isNotEmpty()
@@ -100,34 +104,46 @@ private fun App(link: BridgeLink, withBluetooth: (() -> Unit) -> Unit) {
                 )
                 NavigationBarItem(
                     selected = tab == 0, onClick = { tab = 0 }, colors = colors,
-                    icon = { BadgedBox(badge = { if (fault && tab != 0) Badge(containerColor = Palette.Alert) }) { NavIcon(checklist = true, selected = tab == 0) } },
+                    icon = { BadgedBox(badge = { if (fault && tab != 0) Badge(containerColor = Palette.Alert) }) { NavIcon(Icon.STATUS, selected = tab == 0) } },
                     label = { Text("Status") },
                 )
-                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, colors = colors, icon = { NavIcon(checklist = false, selected = tab == 1) }, label = { Text("Ride") })
+                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, colors = colors, icon = { NavIcon(Icon.RIDE, selected = tab == 1) }, label = { Text("Ride") })
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, colors = colors, icon = { NavIcon(Icon.SETTINGS, selected = tab == 2) }, label = { Text("Settings") })
             }
         },
     ) { pad ->
         Box(Modifier.padding(pad)) {
-            if (tab == 0) StatusScreen(ui, now, actions) else RideScreen(ui, now)
+            when (tab) {
+                0 -> StatusScreen(ui, now, up, actions)
+                1 -> RideScreen(ui, now)
+                else -> SettingsScreen(settings, up, engine::applySettings)
+            }
         }
     }
 }
 
-/** Drawn icons in one 2 dp square-capped stroke: a checklist for Status, a gauge for Ride. */
+private enum class Icon { STATUS, RIDE, SETTINGS }
+
+/** Drawn icons in one 2 dp stroke: a checklist for Status, a gauge for Ride, sliders for Settings. */
 @Composable
-private fun NavIcon(checklist: Boolean, selected: Boolean) {
+private fun NavIcon(icon: Icon, selected: Boolean) {
     val c = if (selected) ground else ink
     Canvas(Modifier.size(24.dp)) {
         val sw = 2.dp.toPx()
         fun line(a: Offset, b: Offset) = drawLine(c, a, b, sw)
         val u = size.width / 24f
-        if (checklist) {
+        if (icon == Icon.STATUS) {
             drawRect(c, Offset(4 * u, 5 * u), Size(5 * u, 5 * u), style = Stroke(sw))
             drawRect(c, Offset(4 * u, 14 * u), Size(5 * u, 5 * u), style = Stroke(sw))
             line(Offset(13 * u, 7.5f * u), Offset(20 * u, 7.5f * u)); line(Offset(13 * u, 16.5f * u), Offset(20 * u, 16.5f * u))
-        } else {
+        } else if (icon == Icon.RIDE) {
             drawArc(c, 180f, 180f, false, Offset(3 * u, 9 * u), Size(18 * u, 18 * u), style = Stroke(sw))
             line(Offset(12 * u, 18 * u), Offset(17 * u, 11 * u))
+        } else { // three sliders
+            listOf(6f to 8f, 12f to 15f, 18f to 6f).forEach { (y, x) ->
+                line(Offset(4 * u, y * u), Offset(20 * u, y * u))
+                drawRect(c, Offset((x - 2) * u, (y - 2.5f) * u), Size(4 * u, 5 * u))
+            }
         }
     }
 }

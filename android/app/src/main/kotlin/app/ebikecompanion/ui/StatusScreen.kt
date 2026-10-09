@@ -24,16 +24,17 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.ebikecompanion.ble.BridgeLink
+import app.ebikecompanion.sync.SyncEngine
 
 class StatusActions(val connect: () -> Unit, val pair: () -> Unit, val disconnect: () -> Unit, val setClock: () -> Unit)
 
 @Composable
-fun StatusScreen(ui: BridgeLink.Ui, now: Long, actions: StatusActions) {
-    val rows = Board.sorted(Board.rows(ui, now))
+fun StatusScreen(ui: BridgeLink.Ui, now: Long, up: SyncEngine.Ui, actions: StatusActions) {
+    val rows = Board.sorted(Board.rows(ui, now, up))
     val busy = ui.phase != BridgeLink.Phase.IDLE && !Board.linkUp(ui, now)
     Column(Modifier.fillMaxSize()) {
         Text("STATUS", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp))
-        CountPlate(Board.count(ui, now))
+        CountPlate(Board.count(ui, now, up))
         LazyColumn(Modifier.weight(1f).padding(horizontal = 16.dp).padding(top = 4.dp)) {
             items(rows, key = { it.id }) { BoardRow(it) }
             item { Box(Modifier.fillMaxWidth().topRule(ink)) }

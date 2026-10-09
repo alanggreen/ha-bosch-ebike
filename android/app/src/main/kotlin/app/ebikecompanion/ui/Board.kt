@@ -1,6 +1,7 @@
 package app.ebikecompanion.ui
 
 import app.ebikecompanion.ble.BridgeLink
+import app.ebikecompanion.sync.SyncEngine
 
 enum class MarkState { OK, WARN, OFF, BAD, UNKNOWN }
 enum class Tone { NORMAL, BAD, WAIT }
@@ -24,7 +25,18 @@ object Board {
 
     private fun unknown(id: String, label: String) = BoardLine(id, label, MarkState.UNKNOWN, "No data", "Bridge not connected")
 
-    fun rows(ui: BridgeLink.Ui, now: Long): List<BoardLine> {
+    /** The phone's own upload to Home Assistant: independent of the ESP32 link. */
+    fun upload(u: SyncEngine.Ui): BoardLine = when {
+        !u.configured -> BoardLine("phone", "Phone upload", MarkState.OFF, "Not set up", "Open Settings")
+        u.queued > 0 && u.mqttUp -> BoardLine("phone", "Phone upload", MarkState.WARN, "${u.queued} waiting", "Uploading to Home Assistant")
+        u.queued > 0 -> BoardLine("phone", "Phone upload", MarkState.WARN, "${u.queued} waiting", brokerDown(u))
+        u.mqttUp -> BoardLine("phone", "Phone upload", MarkState.OK, "Online", "${u.uploaded} records uploaded")
+        else -> BoardLine("phone", "Phone upload", MarkState.OFF, "Offline", brokerDown(u))
+    }
+
+    private fun brokerDown(u: SyncEngine.Ui) = if (u.error.isBlank()) "Broker unreachable" else "Broker unreachable: ${u.error.take(40)}"
+
+    fun rows(ui: BridgeLink.Ui, now: Long, up: SyncEngine.Ui = SyncEngine.Ui()): List<BoardLine> {
         val s = ui.status
         if (!linkUp(ui, now) || s == null) {
             val silent = silentFor(ui, now)
@@ -34,7 +46,7 @@ object Board {
                 if (ui.message.isNotEmpty()) ui.message else if (silent == null) "Tap Connect" else "Unreachable for $silent s",
             )
             return listOf(link) + listOf("bike" to "Bike", "sd" to "SD card", "clock" to "Clock", "ha" to "Home Assistant",
-                "backlog" to "Backlog", "drop" to "Dropped", "up" to "ESP32 uptime").map { unknown(it.first, it.second) }
+                "backlog" to "Backlog", "drop" to "Dropped", "up" to "ESP32 uptime").map { unknown(it.first, it.second) } + upload(up)
         }
         val dropped = s.dropped > 0 || s.writeFailures > 0
         return listOf(
@@ -49,6 +61,7 @@ object Board {
             else BoardLine("ha", "Home Assistant", MarkState.OFF, "Offline", "Saving to the card"),
             if (s.unacked == 0L) BoardLine("backlog", "Backlog", MarkState.OK, "0 waiting", "All uploaded")
             else BoardLine("backlog", "Backlog", MarkState.WARN, "${s.unacked} waiting", "Uploads when back online"),
+            upload(up),
             if (!dropped) BoardLine("drop", "Dropped", MarkState.OK, "0 dropped", "0 write failures")
             else BoardLine("drop", "Dropped", MarkState.BAD, "${s.dropped} dropped", "${s.writeFailures} write failures"),
             BoardLine("up", "ESP32 uptime", MarkState.OK, uptime(s.uptimeMs), "Boot %08X".format(s.bootId)),
@@ -60,8 +73,8 @@ object Board {
     /** Problems first; ties keep their natural order. */
     fun sorted(rows: List<BoardLine>) = rows.sortedBy { rank(it.state) }
 
-    fun count(ui: BridgeLink.Ui, now: Long): Count {
-        val rows = sorted(rows(ui, now))
+    fun count(ui: BridgeLink.Ui, now: Long, up: SyncEngine.Ui = SyncEngine.Ui()): Count {
+        val rows = sorted(rows(ui, now, up))
         val bad = rows.filter { it.state == MarkState.BAD }
         if (bad.isNotEmpty()) {
             val first = bad.first()

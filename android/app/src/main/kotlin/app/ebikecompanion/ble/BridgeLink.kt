@@ -19,6 +19,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +34,15 @@ import kotlinx.coroutines.flow.update
 @SuppressLint("MissingPermission")
 class BridgeLink(private val ctx: Context) {
     enum class Phase { IDLE, SCANNING, BONDING, CONNECTING, CONNECTED }
+
+    /** Events for the sync engine; called on Bluetooth threads, so implementations must hand off. */
+    interface Listener {
+        fun onReady()
+        fun onLogPacket(bytes: ByteArray)
+        fun onDisconnected()
+    }
+
+    @Volatile var listener: Listener? = null
 
     data class Ui(
         val phase: Phase = Phase.IDLE,
@@ -57,6 +67,9 @@ class BridgeLink(private val ctx: Context) {
     private val notifyQueue = ArrayDeque<BluetoothGattCharacteristic>()
     private var notifyStarted = false
     private var failures = 0
+    private val commands = ArrayDeque<ByteArray>()
+    private var writing = false
+    private var writeStartedAt = 0L
 
     // ---- public actions ------------------------------------------------------
 
@@ -84,10 +97,31 @@ class BridgeLink(private val ctx: Context) {
         gatt?.close()
         gatt = null
         command = null
+        dropCommands()
+        listener?.onDisconnected()
         set(Phase.IDLE, "")
     }
 
-    fun setClock() = write(Commands.setTime(System.currentTimeMillis() / 1000))
+    fun setClock() = sendCommand(Commands.setTime(System.currentTimeMillis() / 1000))
+
+    /** Commands are written one at a time; each waits for the previous write to complete. */
+    fun sendCommand(bytes: ByteArray) {
+        handler.post { commands.addLast(bytes); pumpCommands() }
+    }
+
+    private fun dropCommands() { commands.clear(); writing = false }
+
+    @Suppress("DEPRECATION")
+    private fun pumpCommands() {
+        val c = command ?: return
+        if (writing && SystemClock.elapsedRealtime() - writeStartedAt < 3_000) return
+        val next = commands.removeFirstOrNull() ?: return
+        writing = true
+        writeStartedAt = SystemClock.elapsedRealtime()
+        c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        c.value = next
+        if (gatt?.writeCharacteristic(c) != true) writing = false
+    }
 
     // ---- scanning and pairing -------------------------------------------------
 
@@ -160,6 +194,8 @@ class BridgeLink(private val ctx: Context) {
             g.close()
             if (gatt === g) gatt = null
             command = null
+            dropCommands()
+            listener?.onDisconnected()
             if (!want) return set(Phase.IDLE, "")
             failures++
             val hint = if (failures >= 3) "Cannot connect. If you pressed Clear Bonding on the ESP32, remove the bridge in Android's Bluetooth settings and pair again." else "Reconnecting"
@@ -181,6 +217,10 @@ class BridgeLink(private val ctx: Context) {
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) = nextNotify(g)
 
+        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            handler.post { writing = false; pumpCommands() }
+        }
+
         @Deprecated("kept for API 31/32")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
             @Suppress("DEPRECATION") c.value?.let { handleNotification(c.uuid, it) }
@@ -194,7 +234,7 @@ class BridgeLink(private val ctx: Context) {
         if (notifyStarted || gatt !== g) return
         notifyStarted = true
         val svc = g.getService(Gatt.SERVICE) ?: return
-        listOf(Gatt.LIVE, Gatt.STATUS).mapNotNull { svc.getCharacteristic(it) }.forEach { notifyQueue.addLast(it) }
+        listOf(Gatt.LIVE, Gatt.STATUS, Gatt.LOG).mapNotNull { svc.getCharacteristic(it) }.forEach { notifyQueue.addLast(it) }
         nextNotify(g)
     }
 
@@ -205,6 +245,7 @@ class BridgeLink(private val ctx: Context) {
             if (_ui.value.phase != Phase.CONNECTED) {
                 set(Phase.CONNECTED, "")
                 setClock() // the phone owns the time: every connection sets it
+                listener?.onReady()
             }
             return
         }
@@ -219,15 +260,8 @@ class BridgeLink(private val ctx: Context) {
         when (uuid) {
             Gatt.STATUS -> Protocol.parseStatus(value)?.let { s -> _ui.update { it.copy(status = s, statusAtMs = now) } }
             Gatt.LIVE -> Protocol.parseRecord(value)?.let { r -> _ui.update { it.copy(live = r, liveAtMs = now) } }
+            Gatt.LOG -> listener?.onLogPacket(value.copyOf())
         }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun write(bytes: ByteArray) {
-        val c = command ?: return
-        c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        c.value = bytes
-        gatt?.writeCharacteristic(c)
     }
 
     private fun set(phase: Phase, message: String) = _ui.update { it.copy(phase = phase, message = message) }
@@ -237,6 +271,8 @@ class BridgeLink(private val ctx: Context) {
         stopScan()
         gatt?.close()
         gatt = null
+        dropCommands()
+        listener?.onDisconnected()
         set(Phase.IDLE, message)
     }
 }
