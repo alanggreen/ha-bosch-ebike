@@ -212,12 +212,18 @@ struct PhoneConn {
   uint16_t handle{BLE_HS_CONN_HANDLE_NONE};
   bool encrypted{false};
   bool registering{false};  // paired during the phone pairing window, address not stored yet
+  uint32_t deadline_ms{0};  // must be encrypted by then, else the link is dropped
   uint16_t mtu{23};
   bool sub_live{false};
   bool sub_status{false};
   bool sub_log{false};
 };
 static PhoneConn g_phone;
+
+// A resolvable private address (what Android uses when reconnecting to a bonded device).
+// The controller cannot match it against the whitelist, and the host cannot map it to the
+// stored identity until the link is encrypted.
+static bool is_rpa(const ble_addr_t &a) { return a.type == BLE_ADDR_RANDOM && (a.val[5] & 0xC0) == 0x40; }
 
 static bool phone_pairing_open() {
   return g_phone_pairing_until_ms != 0 && (int32_t) (g_phone_pairing_until_ms - millis()) > 0;
@@ -247,6 +253,7 @@ static int start_advertising() {
   const bool bike_pairing = pairing_window_open();
   const bool phone_pairing = g_phone_link_enabled && phone_pairing_open();
   const bool pairing = bike_pairing || phone_pairing;
+  const bool phone_slot_open = g_phone_link_enabled && g_phone_addr_valid && g_phone.handle == BLE_HS_CONN_HANDLE_NONE;
 
   // Outside a pairing window, advertise only if the master switch is on AND a
   // bike is bonded (private reconnect). Otherwise stay fully silent. A pairing
@@ -278,10 +285,17 @@ static int start_advertising() {
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
     adv_params.filter_policy = BLE_HCI_ADV_FILT_NONE;
   } else {
-    // Private reconnect: not discoverable, only the bonded bike may connect.
+    // Private reconnect: not discoverable. Normally only the bonded bike may connect
+    // (whitelist). A registered phone that is not connected gets in by advertising
+    // without the whitelist, because its private addresses cannot be whitelisted;
+    // phone_handle_gap_event() then drops every device that is not the bike or the phone.
     adv_params.disc_mode = BLE_GAP_DISC_MODE_NON;
-    apply_bond_whitelist();
-    adv_params.filter_policy = BLE_HCI_ADV_FILT_BOTH;
+    if (phone_slot_open) {
+      adv_params.filter_policy = BLE_HCI_ADV_FILT_NONE;
+    } else {
+      apply_bond_whitelist();
+      adv_params.filter_policy = BLE_HCI_ADV_FILT_BOTH;
+    }
   }
 
   rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, nullptr, BLE_HS_FOREVER,
@@ -296,7 +310,9 @@ static int start_advertising() {
     ESP_LOGI(TAG, "Advertising started (%s), name='%s'",
              bike_pairing ? "PAIRING: discoverable + solicitation eb20"
                           : (phone_pairing ? "PHONE PAIRING: discoverable, no solicitation"
-                                           : "private reconnect: non-discoverable, whitelist, no solicitation"),
+                                           : (phone_slot_open
+                                                  ? "private reconnect: non-discoverable, bike + registered phone"
+                                                  : "private reconnect: non-discoverable, whitelist, no solicitation")),
              g_device_name_cache.c_str());
   }
   return rc;
@@ -471,14 +487,32 @@ static bool phone_handle_gap_event(struct ble_gap_event *event, int *ret) {
       if (ble_gap_conn_find(handle, &desc) != 0)
         return false;
       const bool known_phone = g_phone_addr_valid && addr_equal(desc.peer_id_addr, g_phone_addr);
-      const bool new_phone = !known_phone && phone_pairing_open() && !peer_is_bonded(desc.peer_id_addr);
-      if (!known_phone && !new_phone)
+      const bool bonded_bike = !known_phone && peer_is_bonded(desc.peer_id_addr);
+      const bool new_phone = !known_phone && !bonded_bike && phone_pairing_open();
+      // The registered phone reconnecting from a private address: provisional, it must prove
+      // itself by encrypting with the stored bond (checked in ENC_CHANGE and by a deadline).
+      const bool rpa_phone = !known_phone && !bonded_bike && !new_phone && g_phone_addr_valid &&
+                             is_rpa(desc.peer_id_addr) && g_phone.handle == BLE_HS_CONN_HANDLE_NONE;
+      if (bonded_bike)
         return false;  // this is the bike
+      if (!known_phone && !new_phone && !rpa_phone) {
+        // While a phone is registered we advertise connectable to everyone (the whitelist
+        // cannot match the phone's private addresses), so strangers are dropped here. During
+        // a bike pairing window a new, not yet bonded bike must still get through.
+        if (g_phone_addr_valid && !pairing_window_open()) {
+          ESP_LOGW(TAG, "Dropping connection from unknown device (handle %u)", handle);
+          ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
+          *ret = 0;
+          return true;
+        }
+        return false;  // the bike
+      }
       if (g_phone.handle != handle) {  // not already adopted by an early ENC_CHANGE
         g_phone = PhoneConn{};
         g_phone.handle = handle;
       }
       g_phone.registering = new_phone;
+      g_phone.deadline_ms = millis() + (new_phone ? 120000u : 15000u);
       ESP_LOGI(TAG, "Phone connected (handle %u)%s", handle, new_phone ? " - registering" : "");
       ble_gap_set_data_len(handle, 251, 2120);
       // Keep advertising so the bike can still (re)connect while the phone is connected.
@@ -505,7 +539,19 @@ static bool phone_handle_gap_event(struct ble_gap_event *event, int *ret) {
         g_phone.handle = handle;
       }
       if (event->enc_change.status == 0) {
+        struct ble_gap_conn_desc idd;
+        if (!g_phone.registering && g_phone_addr_valid && ble_gap_conn_find(handle, &idd) == 0 &&
+            !is_rpa(idd.peer_id_addr) && !addr_equal(idd.peer_id_addr, g_phone_addr)) {
+          ESP_LOGW(TAG, "Encrypted peer is not the registered phone - dropping");
+          ble_gap_terminate(handle, BLE_ERR_REM_USER_CONN_TERM);
+          *ret = 0;
+          return true;
+        }
         g_phone.encrypted = true;
+        // Notifications (41-byte status, 56-byte records) do not fit in the default
+        // 23-byte ATT MTU, and not every phone app asks for more: ask for it ourselves.
+        const int mtu_rc = ble_gattc_exchange_mtu(handle, nullptr, nullptr);
+        ESP_LOGI(TAG, "Phone link encrypted, requesting larger MTU (rc=%d)", mtu_rc);
         if (g_phone.registering) {
           struct ble_gap_conn_desc desc;
           if (ble_gap_conn_find(handle, &desc) == 0) {
@@ -535,6 +581,7 @@ static bool phone_handle_gap_event(struct ble_gap_event *event, int *ret) {
       if (event->subscribe.conn_handle != g_phone.handle)
         return false;
       const bool on = event->subscribe.cur_notify != 0;
+      ESP_LOGI(TAG, "Phone subscribe attr=0x%04x notify=%d", event->subscribe.attr_handle, on);
       if (event->subscribe.attr_handle == g_val_live)
         g_phone.sub_live = on;
       else if (event->subscribe.attr_handle == g_val_status)
@@ -955,6 +1002,12 @@ void BoschEbikeLdi::loop() {
       memcpy(pref.val, g_phone_addr.val, 6);
       this->phone_pref_.save(&pref);
       global_preferences->sync();
+    }
+    if (g_phone.handle != BLE_HS_CONN_HANDLE_NONE && !g_phone.encrypted && g_phone.deadline_ms != 0 &&
+        (int32_t) (millis() - g_phone.deadline_ms) >= 0) {
+      ESP_LOGW(TAG, "Phone link was not encrypted in time - dropping");
+      ble_gap_terminate(g_phone.handle, BLE_ERR_REM_USER_CONN_TERM);
+      g_phone.deadline_ms = 0;
     }
     if (g_phone_pairing_until_ms != 0 && (int32_t) (g_phone_pairing_until_ms - millis()) <= 0) {
       g_phone_pairing_until_ms = 0;
