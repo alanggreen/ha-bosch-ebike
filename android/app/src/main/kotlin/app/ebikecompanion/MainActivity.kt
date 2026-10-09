@@ -2,7 +2,12 @@ package app.ebikecompanion
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings as AndroidSettings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -34,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,26 +59,44 @@ import kotlinx.coroutines.delay
 class MainActivity : ComponentActivity() {
     private var afterPermission: (() -> Unit)? = null
     private val askPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted.values.all { it }) afterPermission?.invoke()
+        if (bluetoothGranted()) afterPermission?.invoke()
         afterPermission = null
     }
 
+    private fun bluetoothGranted() = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        .all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+
     private fun withBluetooth(action: () -> Unit) {
-        val need = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-        if (need.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) action()
-        else { afterPermission = action; askPermissions.launch(need.toTypedArray()) }
+        if (bluetoothGranted()) action()
+        else {
+            afterPermission = action
+            // Notifications are asked together but optional: the service runs without them, only its notification is hidden.
+            val ask = mutableListOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+            if (Build.VERSION.SDK_INT >= 33) ask += Manifest.permission.POST_NOTIFICATIONS
+            askPermissions.launch(ask.toTypedArray())
+        }
+    }
+
+    private fun batteryUnrestricted() = getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+
+    /** Without this exemption Android may stop the service's network access after a while in a pocket. */
+    private fun openBatterySettings() {
+        startActivity(Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val app = application as EbikeApp
-        setContent { EbikeTheme { App(app.link, app.engine, ::withBluetooth) } }
+        // The rider left the link on (the app was closed or the phone restarted): bring the service and the link back.
+        if (app.link.wantsConnection() && bluetoothGranted()) BridgeService.start(this, resume = true)
+        setContent { EbikeTheme { App(app.link, app.engine, ::withBluetooth, ::batteryUnrestricted, ::openBatterySettings) } }
     }
 }
 
 @Composable
-private fun App(link: BridgeLink, engine: SyncEngine, withBluetooth: (() -> Unit) -> Unit) {
+private fun App(link: BridgeLink, engine: SyncEngine, withBluetooth: (() -> Unit) -> Unit, batteryUnrestricted: () -> Boolean, openBattery: () -> Unit) {
+    val ctx = LocalContext.current
     val ui by link.ui.collectAsStateWithLifecycle()
     val up by engine.ui.collectAsStateWithLifecycle()
     val settings by engine.settings.collectAsStateWithLifecycle()
@@ -89,9 +113,9 @@ private fun App(link: BridgeLink, engine: SyncEngine, withBluetooth: (() -> Unit
     DisposableEffect(tab) { view.keepScreenOn = tab == 1; onDispose { view.keepScreenOn = false } }
 
     val actions = StatusActions(
-        connect = { withBluetooth { link.connect() } },
-        pair = { withBluetooth { link.pair() } },
-        disconnect = link::disconnect,
+        connect = { withBluetooth { BridgeService.start(ctx); link.connect() } },
+        pair = { withBluetooth { BridgeService.start(ctx); link.pair() } },
+        disconnect = { link.disconnect(); BridgeService.stop(ctx) },
         setClock = link::setClock,
     )
 
@@ -116,7 +140,7 @@ private fun App(link: BridgeLink, engine: SyncEngine, withBluetooth: (() -> Unit
             when (tab) {
                 0 -> StatusScreen(ui, now, up, actions)
                 1 -> RideScreen(ui, now)
-                else -> SettingsScreen(settings, up, engine::applySettings)
+                else -> SettingsScreen(settings, up, engine::applySettings, batteryUnrestricted(), openBattery)
             }
         }
     }

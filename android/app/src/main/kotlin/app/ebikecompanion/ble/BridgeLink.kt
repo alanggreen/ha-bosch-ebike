@@ -57,6 +57,7 @@ class BridgeLink(private val ctx: Context) {
     private val _ui = MutableStateFlow(Ui())
     val ui: StateFlow<Ui> = _ui.asStateFlow()
 
+    private val prefs = ctx.getSharedPreferences("link", Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
     private val adapter: BluetoothAdapter? get() = ctx.getSystemService(BluetoothManager::class.java)?.adapter
 
@@ -74,8 +75,14 @@ class BridgeLink(private val ctx: Context) {
     // ---- public actions ------------------------------------------------------
 
     /** Connect to the bonded bridge, or find and pair a new one (press "eBike Pair phone" in Home Assistant first). */
+    /** True from the moment the rider connects until they disconnect: the service uses it to resume after a restart. */
+    fun wantsConnection() = prefs.getBoolean("want", false)
+
+    private fun remember(want: Boolean) = prefs.edit().putBoolean("want", want).apply()
+
     fun connect() {
         want = true
+        remember(true)
         failures = 0
         handler.removeCallbacksAndMessages(null)
         val bonded = adapter?.bondedDevices?.firstOrNull { it.name == Gatt.DEVICE_NAME }
@@ -84,6 +91,7 @@ class BridgeLink(private val ctx: Context) {
 
     fun pair() {
         want = true
+        remember(true)
         failures = 0
         handler.removeCallbacksAndMessages(null)
         scan()
@@ -91,6 +99,7 @@ class BridgeLink(private val ctx: Context) {
 
     fun disconnect() {
         want = false
+        remember(false)
         handler.removeCallbacksAndMessages(null)
         stopScan()
         gatt?.disconnect()
@@ -268,6 +277,7 @@ class BridgeLink(private val ctx: Context) {
 
     private fun fail(message: String) {
         want = false
+        remember(false)
         stopScan()
         gatt?.close()
         gatt = null

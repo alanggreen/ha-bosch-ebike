@@ -29,7 +29,7 @@ import app.ebikecompanion.sync.Settings
 import app.ebikecompanion.sync.SyncEngine
 
 @Composable
-fun SettingsScreen(current: Settings, up: SyncEngine.Ui, onSave: (Settings) -> Unit) {
+fun SettingsScreen(current: Settings, up: SyncEngine.Ui, onSave: (Settings) -> Unit, batteryOk: Boolean, onBattery: () -> Unit) {
     var host by remember(current) { mutableStateOf(current.host) }
     var port by remember(current) { mutableStateOf(current.port.toString()) }
     var tls by remember(current) { mutableStateOf(current.tls) }
@@ -64,6 +64,13 @@ fun SettingsScreen(current: Settings, up: SyncEngine.Ui, onSave: (Settings) -> U
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             enabled = host.isNotBlank(),
         ) { Text("Save and connect") }
+        Text("Running in the background", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
+        Text(
+            if (batteryOk) "Background use is allowed: the link and the upload keep running with the screen off."
+            else "Android may pause the link in a pocket. Allow background use so it keeps running during a ride.",
+            style = MaterialTheme.typography.bodyMedium, color = soft,
+        )
+        if (!batteryOk) Button(onClick = onBattery, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Allow background use") }
         Text(
             when {
                 !current.configured -> "Not set up yet."
