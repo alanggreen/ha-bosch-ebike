@@ -21,11 +21,12 @@ Files:
 | Box outside | 78 x 74 x 35 mm (93 mm long with the strap tabs) | |
 
 Things the model assumes that you should verify on your boards:
-- **The ESP32 sits on its header pins, with the pins pointing down.** `usb_center_z` (11 mm) is the height of the USB socket
-  centre above the floor. If your pins are shorter or point up, change it so the cable slot lines up with the socket.
-- **`esp_edge_z`** (12.5 mm) is the highest point along the board's long edges (pin tips). **`sd_edge_z`** (5 mm) is the same for the SD module.
+- **The ESP32's header pins point down**, about 8.5 mm long, with the female connectors on them hanging below the board.
+  `esp[2]` (4.6 mm) is the height from the underside of the PCB to the top of the USB socket (PCB 1.6 + socket about 3).
+  `usb_center_z` is worked out from the pillar height so the cable slot lines up with the socket.
+- **`esp_edge_z`** is the highest point along the board's long edges (header pin tips above the PCB). **`sd_edge_z`** (5 mm) is the same for the SD module.
 - **`card_overhang`** (2.5 mm) is how far the microSD card sticks out of the module when fully inserted.
-- **`wire_clear`** is 12 mm for Dupont plugs on the pins. If you **solder** the six wires (recommended, see below) set it to 6 for a lower box.
+- **`wire_clear`** (8 mm) is the headroom above the ESP32 up to the lid.
 
 ## Mounting the ESP32 board on pillars
 
