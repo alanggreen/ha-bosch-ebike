@@ -1,0 +1,17 @@
+# One line-ending rule for everyone (people and agents, WSL and Windows): LF in the repository and in the working tree.
+# An early commit rewrote 58 files to CRLF because the Windows side checked them out that way.
+* text=auto eol=lf
+
+# Windows-only launchers keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never touched by line-ending conversion.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ttf binary
+*.jar binary
+*.apk binary
+*.stl binary
