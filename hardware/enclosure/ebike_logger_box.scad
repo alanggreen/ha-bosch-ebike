@@ -8,14 +8,14 @@
 part = "print";
 
 /* ---------------- YOUR PARTS (measure with calipers) ---------------- */
-esp = [52, 29, 13];      // ESP32 board: length, width, and height from the underside of its PCB to the top of the USB socket.
-                         // If your 13 mm includes header pins pointing down, subtract their length. The board now sits on
-                         // 5 mm spacers, so anything under the PCB must be shorter than esp_standoff.
+esp = [52, 29, 4.6];     // ESP32 board: length, width, and height from the underside of its PCB to the top of the USB socket
+                         // (the 13 mm overall minus the ~8.5 mm header pins that point down). The pins and their female
+                         // connectors hang BELOW the PCB, in the space between the floor and the board (esp_standoff).
 sd  = [48, 31, 5];       // microSD module: length, width, height (PCB + card slot)
 card_overhang = 2.5;     // how far the microSD card sticks out of the module end when fully inserted
 usb_plug_w = 14;         // width of the cable slot (micro-USB plug is ~12 mm)
 usb_plug_h = 10;         // height of the cable slot (plug is ~8 mm)
-esp_standoff = 5;        // the ESP32 board sits this high above the floor of the box, on 4 spacers over the mounting holes
+esp_standoff = 20;       // the ESP32 board sits this high above the floor on 4 pillars: room for the pins and female wire connectors
 usb_center_z = esp_standoff + 3.2;   // height of the USB socket centre above the floor (PCB 1.6 + half the socket)
 esp_edge_z = esp_standoff + 4.1;     // highest point along the ESP32's long edges above the floor (PCB 1.6 + header pin tips 2.5)
 sd_edge_z = 5;           // same for the microSD module (its highest point along the edges)
@@ -24,9 +24,12 @@ foam_t = 2;              // thickness of the self-adhesive foam strip you stick 
 /* ---------------- ESP32 MOUNTING HOLES (measure the real ones and edit) ---------------- */
 mount_holes = [46, 24];  // centre-to-centre spacing of the board's 4 holes: along the board's length, across its width (mm)
 mount_d = 2.7;           // hole diameter: 2.7 suits M2.5 screws (use 3.4 for M3)
-mount_csk = 5.4;         // countersink on the OUTSIDE bottom of the box so a flat-head screw head sits flush underneath
+mount_csk = 4.9;         // countersink on the OUTSIDE bottom of the box (90 degrees): the flat head is 4.7 mm across
 mount_offset = [0, 0];   // shift the hole pattern from the centre of the board's area (mm), if the board's holes are off-centre
-standoff_d = 6;          // outside diameter of each spacer
+standoff_d = 6;          // outside diameter of each pillar
+// parts stacked on the screw, from the bottom of the box up (flat-head screw: its length INCLUDES the head, which sits flush)
+pcb_t = 1.6;  washer_t = 0.5;  nut_t = 2.0;  thread_out = 1.0;    // M2.5 washer and nut; thread left sticking out of the nut
+
 mount_enable = true;
 sd_pad = 1.5;            // the microSD module rests on small pads (it has no mounting holes here)
 
@@ -34,7 +37,7 @@ sd_pad = 1.5;            // the microSD module rests on small pads (it has no mo
 clr = 0.4;               // fit clearance around each board
 gap = 9;                 // space between the two boards for the six wires
 usb_zone = 18;           // room for the USB plug in front of the ESP32 board
-wire_clear = 12;         // headroom above the ESP32: 12 for Dupont plugs, 6 if you solder the wires
+wire_clear = 8;          // headroom above the ESP32 up to the lid (the wires now hang below the board)
 card_stop = 0.6;         // gap between the card edge and the wall: the wall stops the card springing out
 wall = 2.8;  floor_t = 2.4;  lid_t = 2.4;
 r_out = 3;               // outer corner radius
@@ -48,6 +51,8 @@ gasket = true;           // groove for a 2 mm round rubber cord or TPU gasket on
 $fn = 40;
 
 /* ---------------- derived ---------------- */
+min_screw_len = floor_t + esp_standoff + pcb_t + washer_t + nut_t + thread_out;   // 27.5 for 20 mm pillars: use M2.5 x 30
+echo(str("Pillar height ", esp_standoff, " mm. Minimum flat-head screw length ", min_screw_len, " mm: use M2.5 x ", ceil(min_screw_len/5)*5, " mm"));
 ix = usb_zone + esp[0] + 2*clr + 2;        // inside length
 iy = esp[1] + gap + sd[1] + 2*clr;         // inside width
 ih = esp_standoff + esp[2] + wire_clear;    // inside height
@@ -111,7 +116,7 @@ module base() {
   for (px = [sd_x0 + 3, sd_x1 - 9], py = [sd_y + 3, sd_y + sd[1] - 9]) translate([wall + px, wall + py, floor_t - 0.01]) cube([6, 6, sd_pad + 0.01]);
   // board guides
   translate([wall, wall, floor_t - 0.01]) {
-    guide(esp_x, esp_y, esp[0], esp[1], esp_standoff + 2);   // rim reaches just above the raised PCB
+    guide(esp_x, esp_y, esp[0], esp[1], esp_standoff + 2);   // rim reaches just above the raised PCB; the finger notches let the wires out
     guide(sd_x0, sd_y, sd[0], sd[1], 3.5);
   }
 }
