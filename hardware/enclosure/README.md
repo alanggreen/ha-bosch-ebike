@@ -16,7 +16,7 @@ Files:
 
 | Part | Size | Where it matters |
 |---|---|---|
-| ESP32 board | 52 x 29 x 13 mm (height from pin tips to the top of the USB socket) | pocket and lid height |
+| ESP32 board | 52 x 29 mm; 13 mm overall with the pins, about 4.6 mm of it above the PCB underside | pocket and lid height |
 | microSD module | 48 x 31 mm, 5 mm high | pocket |
 | Box outside | 78 x 74 x 35 mm (93 mm long with the strap tabs) | |
 
