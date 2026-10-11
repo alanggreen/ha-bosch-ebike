@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -49,6 +51,15 @@ val soft @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
 fun Modifier.topRule(color: Color) = drawBehind { drawRect(color, size = Size(size.width, 2.dp.toPx())) }
 fun Modifier.bottomRule(color: Color) =
     drawBehind { drawRect(color, topLeft = Offset(0f, size.height - 2.dp.toPx()), size = Size(size.width, 2.dp.toPx())) }
+
+/** A section head: a 2 dp ink rule across the width, then the head in [sectionHead], announced as a heading. */
+@Composable
+fun SectionHead(text: String, modifier: Modifier = Modifier, rule: Boolean = true, color: Color = ink) {
+    Column(modifier.fillMaxWidth()) {
+        if (rule) Box(Modifier.fillMaxWidth().height(2.dp).background(ink))
+        Text(text, style = sectionHead, color = color, modifier = Modifier.padding(top = if (rule) 8.dp else 0.dp).semantics { heading() })
+    }
+}
 
 /** Filled holds, half is partial, hollow is not active, dashed is unknown, a cross is a failure. Words always accompany it. */
 @Composable
@@ -80,6 +91,22 @@ fun CountPlate(count: Count) {
     Column(Modifier.fillMaxWidth().background(bg).padding(horizontal = 16.dp, vertical = 10.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
         Text(count.title.uppercase(), style = MaterialTheme.typography.displayLarge, color = fg, maxLines = 1, softWrap = false)
         Text(count.sub, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = fg, modifier = Modifier.padding(top = 4.dp))
+    }
+}
+
+@Composable
+fun FaultBanner(message: String) {
+    if (message.isNotEmpty()) {
+        Row(
+            Modifier.fillMaxWidth().background(Palette.Alert).heightIn(min = 48.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .semantics { liveRegion = LiveRegionMode.Assertive },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Mark(MarkState.BAD, 24.dp, onAlert = true)
+            Text(message, color = Palette.Bone, style = MaterialTheme.typography.labelLarge)
+        }
     }
 }
 

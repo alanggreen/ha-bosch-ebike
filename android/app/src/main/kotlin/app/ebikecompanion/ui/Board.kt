@@ -15,7 +15,16 @@ object Board {
     const val FTP_W = 150 // placeholder until the rider sets an FTP in Settings
 
     fun linkUp(ui: BridgeLink.Ui, now: Long) =
-        ui.phase == BridgeLink.Phase.CONNECTED && ui.status != null && now - ui.statusAtMs <= STALE_MS
+        ui.bluetoothOn && ui.phase == BridgeLink.Phase.CONNECTED && ui.status != null && now - ui.statusAtMs <= STALE_MS
+
+    const val BT_OFF = "Bluetooth is off"
+    const val BT_NEXT = "Turn Bluetooth on to connect to the bridge"
+
+    /** Next step shown with "Bluetooth is off"; says what happened when a running link was cut by the switch. */
+    fun bluetoothNote(ui: BridgeLink.Ui, now: Long): String {
+        val silent = silentFor(ui, now)
+        return if (silent == null) "$BT_OFF. $BT_NEXT" else "$BT_OFF: the link dropped $silent s ago. $BT_NEXT"
+    }
 
     /** Seconds since anything arrived from the bridge, or null if nothing ever did. */
     fun silentFor(ui: BridgeLink.Ui, now: Long): Long? {
@@ -40,7 +49,8 @@ object Board {
         val s = ui.status
         if (!linkUp(ui, now) || s == null) {
             val silent = silentFor(ui, now)
-            val link = BoardLine(
+            val link = if (!ui.bluetoothOn) BoardLine("link", "ESP32 bridge", MarkState.BAD, "Bluetooth off", bluetoothNote(ui, now))
+            else BoardLine(
                 "link", "ESP32 bridge", MarkState.BAD,
                 if (silent == null) "Not connected" else "Not found",
                 if (ui.message.isNotEmpty()) ui.message else if (silent == null) "Tap Connect" else "Unreachable for $silent s",
@@ -78,6 +88,7 @@ object Board {
     fun sorted(rows: List<BoardLine>) = rows.sortedBy { rank(it.state) }
 
     fun count(ui: BridgeLink.Ui, now: Long, up: SyncEngine.Ui = SyncEngine.Ui()): Count {
+        if (!ui.bluetoothOn) return Count(Tone.BAD, BT_OFF, BT_NEXT)
         val rows = sorted(rows(ui, now, up))
         val bad = rows.filter { it.state == MarkState.BAD }
         if (bad.isNotEmpty()) {
@@ -92,24 +103,38 @@ object Board {
 
     /** The red banner on the Ride screen; never dismissible. Empty when all is well. */
     fun banner(ui: BridgeLink.Ui, now: Long): String {
+        if (!ui.bluetoothOn) {
+            val silent = silentFor(ui, now)
+            return if (silent == null) "$BT_OFF. Bridge not connected." else "$BT_OFF. Bridge lost $silent s. Last values shown."
+        }
         if (!linkUp(ui, now)) {
             val silent = silentFor(ui, now)
             return if (silent == null) "Bridge not connected." else "Bridge lost $silent s. Last values shown."
         }
-        if (ui.status?.sdOk == false) return "SD card missing. Rides are not being saved."
+        val status = ui.status ?: return ""
+        if (!status.sdOk) return "SD card missing. Rides are not being saved."
+        if (status.loggerState == 2 || status.writeFailures > 0) {
+            val lost = if (status.writeFailures > 0) " ${status.writeFailures} samples lost." else ""
+            return "SD card write failed.$lost Check the card; rides may not be saved."
+        }
+        if (status.dropped > 0) return "SD card full. ${status.dropped} older samples overwritten."
         return ""
     }
 
     fun footer(ui: BridgeLink.Ui, now: Long): Pair<String, String> {
         val s = ui.status
+        if (!ui.bluetoothOn) return "Card status unknown" to BT_OFF
         if (!linkUp(ui, now) || s == null) return "Card status unknown" to "Bridge not connected"
-        val main = when {
-            !s.sdOk -> "Card missing: not saving"
-            !s.mqttUp -> "Offline: saving to card"
-            s.unacked > 0 -> "Uploading saved data"
-            else -> "Logging to card"
+        val (main, sub) = when {
+            !s.sdOk -> "Card missing: not saving" to "Rides are not being saved"
+            s.loggerState == 2 || s.writeFailures > 0 -> "Card write failure" to
+                if (s.writeFailures > 0) "${s.writeFailures} samples lost" else "Check the SD card"
+            s.dropped > 0 -> "Card full" to "${s.dropped} older samples overwritten"
+            !s.mqttUp -> "Offline: saving to card" to ""
+            s.unacked > 0 -> "Uploading saved data" to "${s.unacked} waiting to upload"
+            else -> "Logging to card" to "Nothing waiting"
         }
-        return main to if (s.unacked > 0) "${s.unacked} waiting to upload" else "Nothing waiting"
+        return main to sub
     }
 
     fun zoneIndex(watts: Float, ftp: Int = FTP_W): Int {

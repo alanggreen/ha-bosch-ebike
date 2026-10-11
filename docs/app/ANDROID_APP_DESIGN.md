@@ -44,7 +44,7 @@ Custom 128-bit service. All characteristics require an encrypted, bonded link (L
 
 ### 2.2 Android app
 - Kotlin, Jetpack Compose UI, Room (local database), foreground service for BLE (screen off, pocket).
-- Permissions: Bluetooth connect/scan, notifications, foreground service (connected device), battery-optimisation exemption. Companion Device Manager pairing for the ESP.
+- Permissions: Bluetooth connect/scan, notifications, foreground service (connected device), battery-optimisation exemption, and fine location (optional, asked from Settings with its reason shown; used only to read the Wi-Fi name so the broker address can switch between the home IP and the remote host; without it, or with location services off, the remote host is used and Settings says so). The Wi-Fi name is read through a Wi-Fi `NetworkCallback` registered with `FLAG_INCLUDE_LOCATION_INFO` and cached per network; when the name changes the MQTT session is restarted only if the chosen host differs (unacknowledged records are published again, which the receiver ignores). Settings > Home networks has two ruled sections: "Saved home networks (n of 5)" first (with the Add-a-name field, "Connected now" marked, Delete), then "Nearby networks" with a secondary Scan button. Scan lists cached `WifiManager` scan results at once (de-duplicated, hidden names dropped, strongest first, connected network marked, saved ones shown muted as "Saved") and asks for a fresh scan best-effort, showing "Scanning..." with a progress bar until results arrive or 10 s pass, then a live-region line such as "Updated 14:32:07, 6 networks" or, if Android refused the scan, a plain throttling message (`CHANGE_WIFI_STATE`; Android throttles it, and Settings says so when it refuses or finds nothing). It needs the same fine location permission and location services as the Wi-Fi name; `NEARBY_WIFI_DEVICES` is not used, as it would be a second prompt and the connected name still needs fine location. The `neverForLocation` flag stays on `BLUETOOTH_SCAN` only. Companion Device Manager pairing for the ESP.
 - Modules: `BridgeLink` (ESP GATT), `HrLink` (chest strap, Wear OS), `Relay` (MQTT or HTTPS to Home Assistant), `RideEngine` (metrics, zones), `Vo2Coach` (test state machine, estimate), `Store`.
 
 ### 2.3 Home Assistant side
@@ -52,7 +52,7 @@ Reuse `offline_backfill` unchanged: the app publishes the same JSON to `ebike-br
 
 ## 3. Screens
 
-1. **Status** (home screen). One row per link with a plain state: ESP bridge, Bike, SD card (ok/missing/failing, free space), Clock, Home Assistant, Backlog (records waiting, last upload), Heart-rate sensor, Phone battery. A red banner replaces the screen if the SD card is failing or the bike link is down while moving.
+1. **Status** (home screen). One row per link with a plain state: ESP bridge, Bike, SD card (ok/missing/failing, free space), Clock, Home Assistant, Backlog (records waiting, last upload), Heart-rate sensor, Phone battery. A red banner replaces the screen if the SD card is failing or the bike link is down while moving. Connect and Pair phone first check that Bluetooth is on: if not, Android's "turn on Bluetooth" dialog opens (no extra permission beyond `BLUETOOTH_CONNECT`); accepting continues the action, declining leaves the ESP32 bridge row and the count plate saying "Bluetooth is off. Turn Bluetooth on to connect to the bridge", and switching it off while connected explains the dropped link the same way.
 2. **Ride.** Large live power with zone bar, plus a metric grid the rider chooses. Available: rider power (now, 3 s, 30 s, 5 min avg), W/kg, zone, cadence, speed, battery %, odometer, distance, ride time, heart rate and % of HRmax, HR drift. Not available from the bike: motor power, assist level, elevation (phone GPS or barometer can add this).
 3. **VO2max test.** Guided flow, section 4.
 4. **History.** Rides (from Home Assistant), tests with quality score, trend of estimated VO2max with a visible error band.
@@ -132,3 +132,19 @@ Health data (HR, weight, age, tests) stays on the phone and in your Home Assista
 - Is a second Bluetooth connection acceptable for ride-time stability? (Phase 1 answers this.)
 - Does any medication affect heart rate?
 - Do you want the Wear OS app, or is the chest strap enough?
+
+### 3.1 Settings screen as built (departure-board world)
+
+Top to bottom: the fault banner, a fixed `SETTINGS` title, the scrolling groups, and a **pinned bar** that stays above the keyboard (`imePadding`) in portrait and landscape.
+Every group starts with the same ruled-band head (`SectionHead`, token `sectionHead`, announced as a heading):
+
+1. **At home**: address at home, saved home networks (up to 5, the count turns to alert ink at 5; Delete is an outlined 48 dp button with an Undo snackbar), a manual "Add a network name" field and the Nearby networks scan (signal shown as Strong, Fair or Weak; dBm stays in the TalkBack description). Add puts a name on the list; Save and connect applies it.
+2. **Away from home**: the VPN or Tailscale address.
+3. **Screen**: Allow landscape.
+4. **Running in the background**: battery exemption.
+5. **Advanced: MQTT**, collapsed with a one-line summary (`<user> on port <port>`) and the note "Only change these if your installer says so": user name, password and acknowledgement secret (each secret field has a 48 dp Show toggle), topic, port (blank means 1883, shown under the field), secure connection (TLS). It opens by itself when something in it is invalid.
+
+The pinned bar holds `Save and connect` (solid, square, 48 dp), enabled only when the form differs from the saved settings and is valid; the line `Not saved` (ink) while there are unsaved edits; the reason when Save is blocked (no address, bad port); and the connection result as a polite live region ("Saved. Connecting to <host actually used>...", "Connected to the broker.", "Not connected to the broker." with the shortened error and a next step).
+Back with unsaved edits asks "Save or discard?" (Save and connect, Discard changes, Keep editing).
+Form values are saved instance state (rotation keeps them) and follow the stored settings only while the form is unedited. Known gap: switching to another tab drops unsaved edits (the Back prompt does not cover tabs).
+Alert-red sentences use `alertText`: #b3261e on bone (5.8:1) and #ffb4ab on navy (10.2:1; #b3261e itself is 2.64:1 there). The logic (dirty, valid, host used, status wording) is in `ui/SettingsForm.kt` with tests in `SettingsFormTest`.

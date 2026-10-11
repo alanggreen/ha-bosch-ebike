@@ -1,8 +1,13 @@
 package app.ebikecompanion
 
 import android.Manifest
+import android.app.Activity
+import android.bluetooth.BluetoothAdapter
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.Intent
+import android.content.res.Configuration
+import android.location.LocationManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +19,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Badge
@@ -22,6 +31,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -40,10 +53,12 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.ebikecompanion.ble.BridgeLink
+import app.ebikecompanion.sync.Ssid
 import app.ebikecompanion.sync.SyncEngine
 import app.ebikecompanion.ui.SettingsScreen
 import app.ebikecompanion.ui.Board
@@ -63,13 +78,52 @@ class MainActivity : ComponentActivity() {
         afterPermission = null
     }
 
+    // Location is asked only from Settings, with its reason on screen, and only to read the Wi-Fi name.
+    private val askLocation = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        (application as EbikeApp).engine.recheckNetwork()
+    }
+
+    private fun locationGranted() = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun locationOn() = getSystemService(LocationManager::class.java).isLocationEnabled
+
+    private fun askLocationPermission() {
+        // After two refusals Android no longer shows the dialog; send the rider to the app's settings page instead.
+        if (shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION) || !askedLocationBefore()) {
+            getSharedPreferences("ui", MODE_PRIVATE).edit().putBoolean("askedLocation", true).apply()
+            askLocation.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        } else {
+            startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        }
+    }
+
+    private fun askedLocationBefore() = getSharedPreferences("ui", MODE_PRIVATE).getBoolean("askedLocation", false)
+
     private fun bluetoothGranted() = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         .all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
 
+    // The system "turn Bluetooth on" dialog. It needs BLUETOOTH_CONNECT on API 31+, which withBluetooth has already asked for.
+    private var afterEnable: (() -> Unit)? = null
+    private val askEnable = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val link = (application as EbikeApp).link
+        link.refreshBluetooth()
+        // Declined: do nothing more. Status keeps saying "Bluetooth is off" and Connect asks again.
+        if (result.resultCode == Activity.RESULT_OK || link.isBluetoothOn()) afterEnable?.invoke()
+        afterEnable = null
+    }
+
+    /** Permissions first, then Bluetooth itself, then [action] (connect or pair). */
     private fun withBluetooth(action: () -> Unit) {
-        if (bluetoothGranted()) action()
-        else {
-            afterPermission = action
+        if (bluetoothGranted()) {
+            val link = (application as EbikeApp).link
+            if (link.isBluetoothOn()) action()
+            else {
+                link.refreshBluetooth() // show "Bluetooth is off" even if the rider declines or the dialog cannot open
+                afterEnable = action
+                askEnable.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+            }
+        } else {
+            afterPermission = { withBluetooth(action) }
             // Notifications are asked together but optional: the service runs without them, only its notification is hidden.
             val ask = mutableListOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
             if (Build.VERSION.SDK_INT >= 33) ask += Manifest.permission.POST_NOTIFICATIONS
@@ -84,25 +138,38 @@ class MainActivity : ComponentActivity() {
         startActivity(Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
     }
 
+    override fun onStart() {
+        super.onStart()
+        (application as EbikeApp).link.refreshBluetooth() // the switch may have changed while the app was in the background
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val app = application as EbikeApp
         // The rider left the link on (the app was closed or the phone restarted): bring the service and the link back.
         if (app.link.wantsConnection() && bluetoothGranted()) BridgeService.start(this, resume = true)
-        setContent { EbikeTheme { App(app.link, app.engine, ::withBluetooth, ::batteryUnrestricted, ::openBatterySettings) } }
+        setContent { EbikeTheme { App(app.link, app.engine, ::withBluetooth, ::batteryUnrestricted, ::openBatterySettings, ::locationGranted, ::locationOn, ::askLocationPermission) } }
     }
 }
 
 @Composable
-private fun App(link: BridgeLink, engine: SyncEngine, withBluetooth: (() -> Unit) -> Unit, batteryUnrestricted: () -> Boolean, openBattery: () -> Unit) {
+private fun App(link: BridgeLink, engine: SyncEngine, withBluetooth: (() -> Unit) -> Unit, batteryUnrestricted: () -> Boolean, openBattery: () -> Unit,
+    locationGranted: () -> Boolean, locationOn: () -> Boolean, askLocation: () -> Unit) {
     val ctx = LocalContext.current
+    val activity = ctx as? Activity
     val ui by link.ui.collectAsStateWithLifecycle()
     val up by engine.ui.collectAsStateWithLifecycle()
     val settings by engine.settings.collectAsStateWithLifecycle()
     val now by produceState(System.currentTimeMillis()) { while (true) { delay(1000); value = System.currentTimeMillis() } }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val fault = Board.banner(ui, now).isNotEmpty()
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    DisposableEffect(settings.rotateScreen) {
+        activity?.requestedOrientation = if (settings.rotateScreen) ActivityInfo.SCREEN_ORIENTATION_SENSOR else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        onDispose {}
+    }
 
     // Moving turns Status into the Ride face; the rider can go back with the navigation bar.
     val moving = Board.linkUp(ui, now) && (ui.live?.speedKmh ?: 0f) > 0.5f
@@ -122,7 +189,7 @@ private fun App(link: BridgeLink, engine: SyncEngine, withBluetooth: (() -> Unit
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.background) {
+            if (!landscape) NavigationBar(containerColor = MaterialTheme.colorScheme.background) {
                 val colors = NavigationBarItemDefaults.colors(
                     indicatorColor = ink, selectedIconColor = ground, selectedTextColor = ink, unselectedIconColor = ink, unselectedTextColor = ink,
                 )
@@ -136,11 +203,32 @@ private fun App(link: BridgeLink, engine: SyncEngine, withBluetooth: (() -> Unit
             }
         },
     ) { pad ->
-        Box(Modifier.padding(pad)) {
-            when (tab) {
-                0 -> StatusScreen(ui, now, up, actions)
-                1 -> RideScreen(ui, now)
-                else -> SettingsScreen(settings, up, engine::applySettings, batteryUnrestricted(), openBattery)
+        // consumeWindowInsets: the bar/status padding in `pad` is already applied, so a screen's imePadding() only adds the keyboard height beyond it.
+        Row(Modifier.fillMaxSize().padding(pad).consumeWindowInsets(pad)) {
+            if (landscape) {
+                NavigationRail(containerColor = MaterialTheme.colorScheme.background) {
+                    val colors = NavigationRailItemDefaults.colors(
+                        indicatorColor = ink, selectedIconColor = ground, selectedTextColor = ink, unselectedIconColor = ink, unselectedTextColor = ink,
+                    )
+                    NavigationRailItem(
+                        selected = tab == 0, onClick = { tab = 0 }, colors = colors, alwaysShowLabel = true,
+                        icon = { BadgedBox(badge = { if (fault && tab != 0) Badge(containerColor = Palette.Alert) }) { NavIcon(Icon.STATUS, selected = tab == 0) } },
+                        label = { Text("Status") },
+                    )
+                    NavigationRailItem(selected = tab == 1, onClick = { tab = 1 }, colors = colors, alwaysShowLabel = true, icon = { NavIcon(Icon.RIDE, selected = tab == 1) }, label = { Text("Ride") })
+                    NavigationRailItem(selected = tab == 2, onClick = { tab = 2 }, colors = colors, alwaysShowLabel = true, icon = { NavIcon(Icon.SETTINGS, selected = tab == 2) }, label = { Text("Settings") })
+                }
+            }
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                when (tab) {
+                    0 -> StatusScreen(ui, now, up, actions)
+                    1 -> RideScreen(ui, now)
+                    else -> {
+                        // `now` ticks every second, so this re-reads the permission and location switch when the rider returns from Android settings.
+                        val access = remember(now) { Ssid.access(locationGranted(), locationOn()) }
+                        SettingsScreen(settings, ui, now, up, engine::applySettings, batteryUnrestricted(), openBattery, access, askLocation)
+                    }
+                }
             }
         }
     }

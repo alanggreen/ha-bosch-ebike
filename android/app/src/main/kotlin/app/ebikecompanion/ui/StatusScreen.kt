@@ -1,5 +1,6 @@
 package app.ebikecompanion.ui
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -21,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -33,6 +36,11 @@ class StatusActions(val connect: () -> Unit, val pair: () -> Unit, val disconnec
 fun StatusScreen(ui: BridgeLink.Ui, now: Long, up: SyncEngine.Ui, actions: StatusActions) {
     val rows = Board.sorted(Board.rows(ui, now, up))
     val busy = ui.phase != BridgeLink.Phase.IDLE && !Board.linkUp(ui, now)
+    if (LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+        LandscapeStatusScreen(ui, now, up, rows, busy, actions)
+        return
+    }
+
     Column(Modifier.fillMaxSize()) {
         Text("STATUS", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp))
         CountPlate(Board.count(ui, now, up))
@@ -41,17 +49,51 @@ fun StatusScreen(ui: BridgeLink.Ui, now: Long, up: SyncEngine.Ui, actions: Statu
             items(rows) { BoardRow(it) }
             item { Box(Modifier.fillMaxWidth().topRule(ink)) }
         }
-        Row(Modifier.fillMaxWidth().topRule(ink).padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (Board.linkUp(ui, now)) {
-                Button(actions.setClock, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Set clock") }
-                OutlinedButton(actions.disconnect, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Disconnect") }
-            } else if (busy) {
-                Button({}, Modifier.weight(1f).heightIn(min = 48.dp), enabled = false, shape = RectangleShape) { Text("Connecting") }
-                OutlinedButton(actions.disconnect, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Cancel") }
-            } else {
-                Button(actions.connect, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Connect") }
-                OutlinedButton(actions.pair, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Pair phone") }
+        StatusActionButtons(ui, now, busy, actions, Modifier.fillMaxWidth().topRule(ink).padding(horizontal = 16.dp, vertical = 12.dp))
+    }
+}
+
+@Composable
+private fun LandscapeStatusScreen(ui: BridgeLink.Ui, now: Long, up: SyncEngine.Ui, rows: List<BoardLine>, busy: Boolean, actions: StatusActions) {
+    Row(
+        Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        Column(
+            Modifier.weight(0.9f).fillMaxHeight(),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("STATUS", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 4.dp))
+                CountPlate(Board.count(ui, now, up))
             }
+            StatusActionButtons(
+                ui,
+                now,
+                busy,
+                actions,
+                Modifier.fillMaxWidth().topRule(ink).padding(top = 8.dp),
+            )
+        }
+        LazyColumn(Modifier.weight(1.4f).fillMaxHeight().padding(top = 4.dp)) {
+            items(rows) { BoardRow(it) }
+            item { Box(Modifier.fillMaxWidth().topRule(ink)) }
+        }
+    }
+}
+
+@Composable
+private fun StatusActionButtons(ui: BridgeLink.Ui, now: Long, busy: Boolean, actions: StatusActions, modifier: Modifier) {
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (Board.linkUp(ui, now)) {
+            Button(actions.setClock, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Set clock") }
+            OutlinedButton(actions.disconnect, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Disconnect") }
+        } else if (busy) {
+            Button({}, Modifier.weight(1f).heightIn(min = 48.dp), enabled = false, shape = RectangleShape) { Text("Connecting") }
+            OutlinedButton(actions.disconnect, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Cancel") }
+        } else {
+            Button(actions.connect, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Connect") }
+            OutlinedButton(actions.pair, Modifier.weight(1f).heightIn(min = 48.dp), shape = RectangleShape) { Text("Pair phone") }
         }
     }
 }

@@ -1,6 +1,12 @@
 package app.ebikecompanion.sync
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
 import android.os.SystemClock
 import app.ebikecompanion.ble.BridgeLink
 import app.ebikecompanion.ble.Commands
@@ -44,6 +50,8 @@ class SyncEngine(
         val uploaded: Long = 0,
         val receiving: Boolean = false,
         val error: String = "",
+        val ssid: String? = null, // the Wi-Fi name as far as Android lets the app read it
+        val onHome: Boolean = false, // the relay is using the home address
     )
 
     private val _ui = MutableStateFlow(Ui())
@@ -68,6 +76,7 @@ class SyncEngine(
         store = RecordStore(File(ctx.filesDir, "ride")).also { it.load() }
         _settings.value = settingsStore.load()
         link.listener = this
+        watchWifi()
         scope.launch { mutex.withLock { startRelay() }; tickLoop() }
     }
 
@@ -87,8 +96,65 @@ class SyncEngine(
     private fun startRelay() {
         val s = _settings.value
         if (!s.configured) { publishUi(); return }
-        relay = MqttRelay(s, settingsStore.clientId(), this).also { it.start() }
+        val ssid = currentSsid()
+        val resolved = s.copy(host = s.effectiveHost(ssid))
+        relayHost = resolved.host
+        relay = MqttRelay(resolved, settingsStore.clientId(), this).also { it.start() }
         publishUi()
+    }
+
+    /**
+     * The Wi-Fi name, or null when unknown. Android returns "<unknown ssid>" without location permission or with location
+     * services off; that is treated as unknown (remote host), never matched against the saved names.
+     * The name is cached per network: a background read may be redacted even though an earlier read in the foreground
+     * was not, and the same network keeps the same name.
+     */
+    private fun currentSsid(): String? {
+        wifiNetwork?.let { n -> wifiNames[n]?.let { return it } }
+        return Ssid.normalize(runCatching { ctx.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid }.getOrNull())
+    }
+
+    private val wifiNames = mutableMapOf<Network, String>()
+    private var wifiNetwork: Network? = null
+    private var relayHost = ""
+
+    private val wifiCallback = object : ConnectivityManager.NetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO) {
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            val name = Ssid.normalize((caps.transportInfo as? WifiInfo)?.ssid)
+            networkChanged(network, name, lost = false)
+        }
+
+        override fun onLost(network: Network) = networkChanged(network, null, lost = true)
+    }
+
+    private fun networkChanged(network: Network, name: String?, lost: Boolean) {
+        scope.launch {
+            mutex.withLock {
+                if (lost) { wifiNames.remove(network); if (wifiNetwork == network) wifiNetwork = null }
+                else { wifiNetwork = network; if (name != null) wifiNames[network] = name }
+                reresolveHost()
+            }
+        }
+    }
+
+    /** Called after the location permission is granted or the Wi-Fi changes: restart the relay only if the host would differ. */
+    fun recheckNetwork() { scope.launch { mutex.withLock { reresolveHost() } } }
+
+    private fun reresolveHost() {
+        val s = _settings.value
+        if (!s.configured || relay == null) { publishUi(); return }
+        if (s.effectiveHost(currentSsid()) == relayHost) { publishUi(); return }
+        // Same as a settings change: a new session; everything unacknowledged is published again, repeats are ignored by HA.
+        relay?.stop(); relay = null
+        mqttUp = false; error = ""; sentCount = 0
+        startRelay()
+    }
+
+    private fun watchWifi() {
+        runCatching {
+            val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return
+            cm.registerNetworkCallback(NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), wifiCallback)
+        }
     }
 
     private suspend fun tickLoop() {
@@ -194,7 +260,12 @@ class SyncEngine(
     }
 
     private fun publishUi() {
-        _ui.value = Ui(_settings.value.configured, mqttUp && relay != null, if (::store.isInitialized) store.size else 0, uploaded, receiving, error)
+        val s = _settings.value
+        val ssid = wifiNetwork?.let { wifiNames[it] }
+        _ui.value = Ui(
+            s.configured, mqttUp && relay != null, if (::store.isInitialized) store.size else 0, uploaded, receiving, error,
+            ssid, relay != null && s.homeIp.isNotBlank() && relayHost == s.homeIp.trim(),
+        )
     }
 
     companion object {

@@ -16,6 +16,8 @@ Kotlin + Jetpack Compose + Material 3, package `app.ebikecompanion`, minSdk 31.
 - Design: the **departure board** (rows sorted by urgency, ruled bands, flip cells, bone/navy, Barlow, alert red `#b3261e`, square corners).
   Source of truth: `../PRODUCT.md`, `../.impeccable/surfaces/`, `../docs/app/mockups/board.html`. A failing SD card or lost bridge must be visible on every screen.
   `DESIGN.md` is not written yet; the impeccable documenter writes it from the built app.
+- The home/remote broker switch needs the Wi-Fi name: `ACCESS_FINE_LOCATION` (asked from Settings only), `Ssid.normalize` treats `<unknown ssid>`/null as unknown (remote host), and Settings shows when permission or location services are missing. Settings also lists nearby networks (`Ssid.nearby`, `Ssid.scanNote`; needs `CHANGE_WIFI_STATE` for `startScan`, same location permission). Behaviour on the phone is not yet verified.
+- Connect / Pair phone (`MainActivity.withBluetooth`): runtime permissions first (`BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT`), then, if Bluetooth is off, the system dialog `BluetoothAdapter.ACTION_REQUEST_ENABLE` (needs `BLUETOOTH_CONNECT` only, no new permission); accepted continues with the connect or pair, declined stops. `BridgeLink.Ui.bluetoothOn` follows the switch (`ACTION_STATE_CHANGED` receiver): Status/Ride say "Bluetooth is off" with the next step (`Board.bluetoothNote`), a link cut by the switch is closed and resumes by itself if the rider had left it on. The dialog path is not yet verified on the phone.
 - Status wording must tell the truth: "SD card OK" only if the card mounts **and** writes work (`Board.rows` uses logger state 2).
 
 ## Workflow (Windows PowerShell)

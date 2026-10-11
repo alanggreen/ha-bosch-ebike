@@ -52,14 +52,66 @@ class BridgeLink(private val ctx: Context) {
         val live: Record? = null,
         val liveAtMs: Long = 0,
         val mtu: Int = 23,
+        /** The phone's Bluetooth switch. While false nothing can connect; Status says so instead of a bare "Not connected". */
+        val bluetoothOn: Boolean = true,
     )
-
-    private val _ui = MutableStateFlow(Ui())
-    val ui: StateFlow<Ui> = _ui.asStateFlow()
 
     private val prefs = ctx.getSharedPreferences("link", Context.MODE_PRIVATE)
     private val handler = Handler(Looper.getMainLooper())
     private val adapter: BluetoothAdapter? get() = ctx.getSystemService(BluetoothManager::class.java)?.adapter
+
+    private val _ui = MutableStateFlow(Ui(bluetoothOn = adapter?.isEnabled ?: true))
+    val ui: StateFlow<Ui> = _ui.asStateFlow()
+
+    /** True when the phone's Bluetooth is on right now (asks the adapter, not the last broadcast). */
+    fun isBluetoothOn() = adapter?.isEnabled == true
+
+    /** Re-read the switch, e.g. after the enable dialog was declined or the app came back to the front. */
+    fun refreshBluetooth() {
+        val on = isBluetoothOn()
+        if (on != _ui.value.bluetoothOn) bluetoothChanged(if (on) BluetoothAdapter.STATE_ON else BluetoothAdapter.STATE_OFF)
+    }
+
+    /**
+     * Follows the Bluetooth switch for the life of the process: [ctx] is the application context, so the receiver
+     * is registered once here and Android drops it with the process. A running link that the switch cuts is closed
+     * and explained; if the rider had left the link on, it resumes by itself when Bluetooth comes back.
+     */
+    private val stateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            if (i.action == BluetoothAdapter.ACTION_STATE_CHANGED) bluetoothChanged(i.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR))
+        }
+    }
+
+    init {
+        ContextCompat.registerReceiver(ctx, stateReceiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), ContextCompat.RECEIVER_EXPORTED)
+    }
+
+    /** For a context that is not the application: stop following the switch. */
+    fun close() = runCatching { ctx.unregisterReceiver(stateReceiver) }
+
+    private fun bluetoothChanged(state: Int) {
+        when (state) {
+            BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> {
+                if (!_ui.value.bluetoothOn) return
+                handler.removeCallbacksAndMessages(null)
+                stopScan()
+                gatt?.close()
+                gatt = null
+                command = null
+                notifyQueue.clear()
+                dropCommands()
+                want = false // in memory only: the stored "want" stays, so the link resumes when Bluetooth returns
+                listener?.onDisconnected()
+                _ui.update { it.copy(bluetoothOn = false, phase = Phase.IDLE, message = "") }
+            }
+            BluetoothAdapter.STATE_ON -> {
+                if (_ui.value.bluetoothOn) return
+                _ui.update { it.copy(bluetoothOn = true) }
+                if (wantsConnection() && _ui.value.phase == Phase.IDLE) connect()
+            }
+        }
+    }
 
     private var want = false
     private var device: BluetoothDevice? = null
@@ -81,6 +133,7 @@ class BridgeLink(private val ctx: Context) {
     private fun remember(want: Boolean) = prefs.edit().putBoolean("want", want).apply()
 
     fun connect() {
+        if (!isBluetoothOn()) return bluetoothIsOff()
         want = true
         remember(true)
         failures = 0
@@ -89,7 +142,11 @@ class BridgeLink(private val ctx: Context) {
         if (bonded != null) open(bonded) else scan()
     }
 
+    /** Bluetooth is off: say so on every screen. The stored "want" is left alone, so a resumed link continues once it is on. */
+    private fun bluetoothIsOff() = _ui.update { it.copy(bluetoothOn = false, phase = Phase.IDLE, message = "") }
+
     fun pair() {
+        if (!isBluetoothOn()) return bluetoothIsOff()
         want = true
         remember(true)
         failures = 0
@@ -146,7 +203,7 @@ class BridgeLink(private val ctx: Context) {
     private var scanning = false
 
     private fun scan() {
-        val scanner = adapter?.bluetoothLeScanner ?: return fail("Bluetooth is off")
+        val scanner = adapter?.bluetoothLeScanner ?: return bluetoothIsOff()
         set(Phase.SCANNING, "Looking for the bridge")
         val filter = ScanFilter.Builder().setDeviceName(Gatt.DEVICE_NAME).build()
         scanner.startScan(listOf(filter), ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), scanCb)
@@ -184,6 +241,7 @@ class BridgeLink(private val ctx: Context) {
     private fun open(dev: BluetoothDevice) {
         device = dev
         notifyStarted = false
+        gatt?.close() // a resume after Bluetooth returns may overlap the rider's own Connect
         set(Phase.CONNECTING, "Connecting")
         gatt = dev.connectGatt(ctx, false, cb, BluetoothDevice.TRANSPORT_LE)
     }

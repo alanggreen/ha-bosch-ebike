@@ -29,7 +29,9 @@ object Palette {
     val StageText = Color(0xFFF2EFE6)
     val StageSoft = Color(0xFFA3B4CC)
     val Alert = Color(0xFFB3261E) // Material error role; deliberately not Zone 5's orange-red
-    val Zones = listOf(Color(0xFF2A9D8F), Color(0xFF8AB17D), Color(0xFFFFD23F), Color(0xFFF4A259), Color(0xFFEF6A43))
+    /** Alert red as TEXT on navy: #b3261e is only 2.64:1 there. #ffb4ab (Material's dark error) is 10.2:1. On bone #b3261e is 5.8:1. */
+    val AlertOnNavy = Color(0xFFFFB4AB)
+    val Zones =listOf(Color(0xFF2A9D8F), Color(0xFF8AB17D), Color(0xFFFFD23F), Color(0xFFF4A259), Color(0xFFEF6A43))
     val Wait = Color(0xFFFFD23F)
 }
 
@@ -61,6 +63,12 @@ private val Type = Typography(
     labelLarge = TextStyle(fontFamily = Body, fontWeight = FontWeight.SemiBold, fontSize = 16.sp),
     labelMedium = TextStyle(fontFamily = Body, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, letterSpacing = 0.7.sp),
 )
+
+/** The ruled-band section head: Barlow Condensed bold 20 sp. Use [SectionHead] so it also carries heading semantics. */
+val sectionHead @Composable get() = MaterialTheme.typography.labelLarge.copy(fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+
+/** Alert red for sentences (not fills): readable on both grounds (5.8:1 on bone, 10.2:1 on navy). */
+val alertText @Composable get() = if (isSystemInDarkTheme()) Palette.AlertOnNavy else Palette.Alert
 
 /** True when the user turned animations off (Remove animations): flip cells then change instantly. */
 val LocalReduceMotion = compositionLocalOf { false }

@@ -39,4 +39,44 @@ class BoardTest {
     @Test fun aMissingCardIsStillReported() {
         assertEquals("Missing", row(ui(status(flags = 0x1A)), "sd").value)
     }
+
+    @Test fun refusedCardWritesAreVisibleOnRide() {
+        val u = ui(status(logger = 2, failures = 169))
+        assertEquals("SD card write failed. 169 samples lost. Check the card; rides may not be saved.", Board.banner(u, 2000))
+        assertEquals("Card write failure" to "169 samples lost", Board.footer(u, 2000))
+    }
+
+    private val btOff = BridgeLink.Ui(bluetoothOn = false)
+
+    @Test fun bluetoothOffAndNeverLinkedSaysSoWithTheNextStep() {
+        val r = row(btOff, "link")
+        assertEquals(MarkState.BAD, r.state)
+        assertEquals("Bluetooth off", r.value)
+        assertEquals("Bluetooth is off. Turn Bluetooth on to connect to the bridge", r.sub)
+        assertEquals(Count(Tone.BAD, "Bluetooth is off", "Turn Bluetooth on to connect to the bridge"), Board.count(btOff, 2000))
+        assertEquals("Bluetooth is off. Bridge not connected.", Board.banner(btOff, 2000))
+    }
+
+    @Test fun bluetoothOnKeepsTheOldWording() {
+        val on = BridgeLink.Ui()
+        assertEquals("Not connected", row(on, "link").value)
+        assertEquals("Tap Connect", row(on, "link").sub)
+        assertEquals("Bridge not connected.", Board.banner(on, 2000))
+    }
+
+    @Test fun aLinkCutByTheBluetoothSwitchIsExplainedNotJustNotConnected() {
+        val cut = ui(status()).copy(bluetoothOn = false, phase = BridgeLink.Phase.IDLE)
+        assertEquals(false, Board.linkUp(cut, 2000)) // fresh status, but the switch is off
+        val r = row(cut, "link")
+        assertEquals("Bluetooth off", r.value)
+        assertEquals("Bluetooth is off: the link dropped 1 s ago. Turn Bluetooth on to connect to the bridge", r.sub)
+        assertEquals("Bluetooth is off. Bridge lost 1 s. Last values shown.", Board.banner(cut, 2000))
+        assertEquals("Card status unknown" to "Bluetooth is off", Board.footer(cut, 2000))
+    }
+
+    @Test fun overwrittenSamplesAreVisibleOnRide() {
+        val u = ui(status(dropped = 12))
+        assertEquals("SD card full. 12 older samples overwritten.", Board.banner(u, 2000))
+        assertEquals("Card full" to "12 older samples overwritten", Board.footer(u, 2000))
+    }
 }
