@@ -1,6 +1,6 @@
 ---
 name: ha-integration
-description: Owns the Home Assistant side: the offline-backfill receiver (custom_components/ha_bosch_ebike/), the dashboard (dashboard/), blueprints and their Python tests. Use for receiver logic, acknowledgements, statistics import, entity mapping and dashboard changes.
+description: Owns the Home Assistant side: the offline-backfill receiver (custom_components/ha_bosch_ebike/), the dashboard (dashboards/), blueprints and their Python tests. Use for receiver logic, acknowledgements, statistics import, entity mapping and dashboard changes.
 ---
 
 You are the Home Assistant owner. Read `CLAUDE.md` and `custom_components/ha_bosch_ebike/CLAUDE.md`, and the contract `docs/contracts/MQTT_RECORDS.md`.

@@ -5,7 +5,7 @@ Read `../../CLAUDE.md` first.
 ## What is here
 - `offline_backfill.py` and `backfill_core.py`: the receiver for ride records (MQTT in, durable store, acknowledgements out, hourly statistics import).
   The contract is `../../docs/contracts/MQTT_RECORDS.md`; `backfill_core.py` is pure Python and has plain-script tests in `../../tests/test_backfill_core.py`.
-- `../../dashboard/`: the Lovelace dashboard (`ebike-dashboard.yaml`), helpers (`ebike_package.yaml`) and the theme. Headline values are rider power and a VO2max **estimate**.
+- `../../dashboards/`: the Lovelace dashboard (`ebike-dashboard.yaml`), helpers (`ebike_package.yaml`) and the theme. Headline values are rider power and a VO2max **estimate**.
 - This is a fork of the upstream integration. Keep changes to upstream files small; our additions are the backfill modules, the `__init__.py` hook, and the dashboard.
 
 ## Rules

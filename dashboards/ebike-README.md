@@ -19,8 +19,11 @@ A Home Assistant dashboard built around rider power and a VO2max estimate. The l
 
 - The live numbers come from the ESP bridge entities (`sensor.ebike_rider_power`, `ebike_speed`, `ebike_cadence`, `ebike_battery_soc_live`). If your entity ids differ, edit them in the two YAML files.
 - **VO2max is an estimate**: `10.8 x best 5-minute rider power / weight + 7`, or the value of `sensor.xiaomi_watch_5_vo2max` if that sensor exists (it does not until you create it; check the watch's actual entity ids). A heart-rate cross-check (Uth) is shown as an attribute.
-- FTP defaults to a **placeholder of 150 W**. The zone colour thresholds inside the profile chart are fixed for FTP 150 W (83/113/135/158 W) because apexcharts-card cannot read a helper; edit them if you change FTP. The zone number on the Live view and the time-in-zone chart do follow the FTP helper.
-- The profile chart shows the last 3 hours, not a chosen ride. Change `graph_span` to match your ride; a ride picker like the mockup's needs a custom card.
-- Time in zone is "today", from history of `sensor.ebike_power_zone`.
+- FTP defaults to a **placeholder of 150 W**. Known limitation: the zone **colour bands** inside the stage-profile chart are fixed for FTP 150 W (83 / 113 / 135 / 158 W), because apexcharts-card `color_threshold` takes only numbers, not a helper. The dashed FTP line on that chart **does** follow the FTP helper, and a note under the chart warns when the helper is not 150 W. If you change FTP, edit the four `color_threshold` values (55 / 75 / 90 / 105 % of FTP). The zone number on the Live view and the time-in-zone block follow the helper.
+- **Not pedalling is not a zone.** `sensor.ebike_power_zone` is `0` when rider power is under 1 W (or cadence is 0), `1` to `5` otherwise, and `unknown` with no power reading. Zone 1 to 5 time therefore excludes standing still. History already recorded is not rewritten: today's Zone 1 total keeps the idle time recorded before this change until midnight.
+- The profile chart shows the **last 24 hours**, not a chosen ride (apexcharts-card cannot snap to the last ride); its power axis runs from 0 to at least 200 W. A ride picker like the mockup's needs a custom card.
+- Time in zone, today, is a button-card block (apexcharts-card 2.2.3 has no horizontal stacked bar) from the five `sensor.ebike_zone_N_today` history-stats sensors; each zone prints its number, name and time.
+- The Bosch all-rides average is `sensor.active_line_plus_avg_rider_power_all_rides` (the integration's name for that sensor is "Avg Rider Power (All Rides)"). Missing or unknown numbers show `--` and a reason.
+- Tab titles are text only (no icons) so each tab is labelled.
 - Statistics-based long trends (VO2max over 12 weeks) fill in as the sensors accumulate long-term statistics.
 - This YAML has not been loaded into a live Home Assistant; expect to adjust entity ids on first load.

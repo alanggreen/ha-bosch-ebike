@@ -14,5 +14,5 @@ You must not weaken the data-safety invariants (write first, ack after store, or
 BLE or MQTT contract, update the contract document and its tests first, tell the owner which other part (`android-app`, `ha-integration`) is affected, and
 do not change those parts yourself unless the owner asks.
 
-Do not edit `android/`, `dashboard/`, `custom_components/` or `hardware/`. Never print secrets. Report what you verified on hardware and what you only
+Do not edit `android/`, `dashboards/`, `custom_components/` or `hardware/`. Never print secrets. Report what you verified on hardware and what you only
 tested on the host or did not test.

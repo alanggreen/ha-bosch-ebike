@@ -10,7 +10,7 @@ card's records through the phone, and a printed **enclosure**.
 |---|---|---|---|
 | Firmware (ESP32) | `esphome/`, `tests/ride_log_store_test.cpp` | `firmware` | `scripts/firmware_host_tests.sh`, `scripts/firmware_build.sh`, `scripts/firmware_ota.sh` |
 | Android app | `android/` | `android-app` | `scripts/android_build.ps1`, `scripts/android_install.ps1` (Windows PowerShell) |
-| Home Assistant | `custom_components/`, `dashboard/`, `blueprints/`, `tests/test_*.py` | `ha-integration` | `scripts/firmware_host_tests.sh` (Python part) |
+| Home Assistant | `custom_components/`, `dashboards/`, `blueprints/`, `tests/test_*.py` | `ha-integration` | `scripts/firmware_host_tests.sh` (Python part) |
 | Enclosure | `hardware/` | `enclosure` | `scripts/enclosure_build.ps1` |
 | Rides and bench tests | `docs/app/PHONE_LINK_TEST_PROTOCOL.md` | `field-test` | read-only: reports, never fixes |
 

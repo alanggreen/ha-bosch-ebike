@@ -1,0 +1,661 @@
+# eBike Stage dashboard (Home Assistant, YAML mode).
+#
+# Requires (HACS frontend): apexcharts-card (2.2.x), button-card.
+# Requires: this repo's ha_bosch_ebike integration (its cards load automatically),
+#           dashboards/ebike_package.yaml and dashboards/themes/ebike.yaml installed.
+#
+# Entity prefixes are already filled in for this installation:
+#   Bosch integration sensors:  sensor.active_line_plus_*
+#   ESP bridge sensors:         sensor.ebike_bridge_mobile_ebike_*
+# If your entity names differ, find/replace them in this file and ebike_package.yaml.
+#
+# Add it in configuration.yaml:
+#   lovelace:
+#     dashboards:
+#       dashboard-ebike-stage:
+#         mode: yaml
+#         title: eBike
+#         icon: mdi:bicycle-electric
+#         show_in_sidebar: true
+#         filename: dashboards/ebike-dashboard.yaml
+#     resources:
+#       - url: https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap
+#         type: css
+#
+# Design rules used below (see PRODUCT.md and .impeccable/surfaces/):
+#   - A number is never shown without its unit, and the unit is a smaller label
+#     beside the numeral so it cannot push the number out of its cell.
+#   - An entity that is missing, unknown or unavailable shows "--" and a short
+#     reason, never an error and never a stale-looking zero.
+#   - Colour is never the only carrier of meaning: zones print their number and
+#     name, faults print words.
+#   - Alert red is #b3261e (white or bone text on it is above 6:1).
+
+title: eBike
+
+button_card_templates:
+  # A ruled numeral field: small caps label above a big condensed number with
+  # the unit as a smaller label beside it. Override per card with `variables`:
+  #   label       text above the number
+  #   unit        printed unit, e.g. W
+  #   decimals    digits after the point
+  #   size        numeral size in px (the unit is 38 % of it)
+  #   empty_hint  short reason shown under "--" when there is no number
+  ebike_field:
+    show_icon: false
+    show_name: false
+    show_state: false
+    show_label: false
+    tap_action:
+      action: more-info
+    variables:
+      label: ""
+      unit: ""
+      decimals: 0
+      size: 48
+      empty_hint: "No reading yet"
+    styles:
+      card:
+        - background: transparent
+        - box-shadow: none
+        - border-radius: 0
+        - border: none
+        - border-top: 2px solid var(--primary-text-color)
+        - padding: 8px 0 12px 0
+        - overflow: visible
+      grid:
+        - grid-template-areas: '"body"'
+        - grid-template-columns: minmax(0, 1fr)
+      custom_fields:
+        body:
+          - justify-self: stretch
+          - text-align: left
+          - min-width: 0
+    custom_fields:
+      body: |
+        [[[
+          const v = entity ? parseFloat(entity.state) : NaN;
+          const ok = !isNaN(v);
+          const num = ok ? v.toFixed(variables.decimals) : '--';
+          const unit = ok ? variables.unit : '';
+          const hint = ok ? '' : `<div style="font:600 14px Barlow,system-ui,sans-serif;color:var(--secondary-text-color);white-space:normal">${variables.empty_hint}</div>`;
+          return `<div style="font:600 13px Barlow,system-ui,sans-serif;letter-spacing:.05em;text-transform:uppercase;color:var(--secondary-text-color);white-space:normal;line-height:1.2">${variables.label}</div>
+          <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;font-family:'Barlow Condensed','Arial Narrow',sans-serif;font-weight:700;font-size:${variables.size}px;line-height:1.05;font-variant-numeric:tabular-nums;color:var(--primary-text-color)"><span>${num}</span><span style="font-size:${Math.round(variables.size * 0.38)}px;font-weight:600;color:var(--secondary-text-color)">${unit}</span></div>${hint}`;
+        ]]]
+
+  # The same field for the handlebar: a bumpy-road tap must not open a popup.
+  ebike_live_field:
+    template: ebike_field
+    tap_action:
+      action: none
+    hold_action:
+      action: none
+    double_tap_action:
+      action: none
+    variables:
+      size: 56
+
+views:
+  # ------------------------------------------------------------------ LIVE
+  # Phone view for the handlebar: live numbers only, no analysis.
+  - title: Live
+    path: live
+    theme: Ebike Live
+    panel: false
+    cards:
+      - type: vertical-stack
+        cards:
+          # Rider power: full card width, the unit is a smaller label beside
+          # the numeral, "187 W" fits at 390 px. Zone 0 is "not pedalling" and
+          # highlights no segment. Inactive segments are only tinted: their
+          # digits stay full ink so they remain legible.
+          - type: custom:button-card
+            entity: sensor.ebike_bridge_mobile_ebike_rider_power
+            show_name: false
+            show_state: false
+            show_icon: false
+            show_label: false
+            tap_action:
+              action: none
+            hold_action:
+              action: none
+            double_tap_action:
+              action: none
+            triggers_update:
+              - sensor.ebike_power_zone
+            styles:
+              card:
+                - background: transparent
+                - box-shadow: none
+                - border: none
+                - border-radius: 0
+                - padding: 12px 0 8px 0
+                - overflow: visible
+              grid:
+                - grid-template-areas: '"body"'
+                - grid-template-columns: minmax(0, 1fr)
+              custom_fields:
+                body:
+                  - justify-self: stretch
+                  - min-width: 0
+            custom_fields:
+              body: |
+                [[[
+                  const v = entity ? parseFloat(entity.state) : NaN;
+                  const ok = !isNaN(v);
+                  const zs = states['sensor.ebike_power_zone'];
+                  const zn = zs ? parseInt(zs.state) : NaN;
+                  const z = isNaN(zn) ? -1 : zn;
+                  const c = ['#2a9d8f', '#8ab17d', '#ffd23f', '#f4a259', '#ef6a43'];
+                  const n = ['Recovery', 'Endurance', 'Tempo', 'Threshold', 'Surge'];
+                  const boxes = c.map((col, i) => {
+                    const on = i + 1 === z;
+                    return `<div style="background:${on ? col : col + '59'};height:${on ? 64 : 40}px;display:grid;place-items:center;font:700 ${on ? 32 : 22}px 'Barlow Condensed',sans-serif;color:#0f1b2d;border:${on ? '3px solid #0f1b2d' : '1px solid rgba(15,27,45,0.45)'};box-sizing:border-box">${i + 1}</div>`;
+                  }).join('');
+                  const caption = z > 0 ? 'Zone ' + z + ', ' + n[z - 1] : (z === 0 ? 'Not pedalling' : 'No power reading');
+                  return `<div style="font:600 15px Barlow,system-ui,sans-serif;letter-spacing:.05em;text-transform:uppercase;color:var(--secondary-text-color)">Rider power</div>
+                  <div style="background:var(--primary-text-color);color:var(--card-background-color);padding:0 14px;margin:6px 0 12px 0;display:flex;align-items:baseline;gap:10px;white-space:nowrap;overflow:hidden;font-family:'Barlow Condensed','Arial Narrow',sans-serif;font-weight:700;line-height:1;font-variant-numeric:tabular-nums"><span style="font-size:min(34vw,150px)">${ok ? Math.round(v) : '--'}</span><span style="font-size:min(10vw,44px);font-weight:600">${ok ? 'W' : ''}</span></div>
+                  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;align-items:end">${boxes}</div>
+                  <div style="margin-top:8px;font:700 18px Barlow,system-ui,sans-serif;color:var(--primary-text-color)">${caption}</div>`;
+                ]]]
+          - type: horizontal-stack
+            cards:
+              - type: custom:button-card
+                template: ebike_live_field
+                entity: sensor.ebike_bridge_mobile_ebike_speed
+                variables:
+                  label: Speed
+                  unit: km/h
+                  decimals: 1
+              - type: custom:button-card
+                template: ebike_live_field
+                entity: sensor.ebike_bridge_mobile_ebike_cadence
+                variables:
+                  label: Cadence
+                  unit: rpm
+          - type: custom:button-card
+            template: ebike_live_field
+            entity: sensor.ebike_bridge_mobile_ebike_battery_soc_live
+            variables:
+              label: Battery
+              unit: "%"
+
+          # Link and card status. Healthy rows are quiet, a fault is a solid
+          # alert-red slab with words, not only a colour.
+          - type: custom:button-card
+            entity: binary_sensor.ebike_bridge_mobile_ebike_connected
+            show_name: false
+            show_state: false
+            show_icon: false
+            show_label: false
+            tap_action:
+              action: none
+            hold_action:
+              action: none
+            double_tap_action:
+              action: none
+            styles:
+              card:
+                - background: transparent
+                - box-shadow: none
+                - border: none
+                - border-radius: 0
+                - padding: 8px 0 4px 0
+              grid:
+                - grid-template-areas: '"body"'
+                - grid-template-columns: minmax(0, 1fr)
+              custom_fields:
+                body:
+                  - justify-self: stretch
+                  - min-width: 0
+            custom_fields:
+              body: |
+                [[[
+                  const s = entity ? entity.state : undefined;
+                  const base = "display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:10px 14px;font-family:'Barlow Condensed','Arial Narrow',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:.03em;";
+                  if (s === 'on') {
+                    return `<div style="${base}background:var(--primary-text-color);color:var(--card-background-color)"><span style="font:600 15px Barlow,system-ui,sans-serif">Bike linked</span><span style="font-size:34px;line-height:1">Connected</span></div>`;
+                  }
+                  const word = s === 'off' ? 'Not linked' : 'No signal';
+                  return `<div style="${base}background:#b3261e;color:#ffffff"><span style="font:600 15px Barlow,system-ui,sans-serif">Bike linked</span><span style="font-size:34px;line-height:1">${word}</span></div>`;
+                ]]]
+          - type: custom:button-card
+            template: ebike_live_field
+            entity: sensor.ebike_log_waiting_to_upload
+            variables:
+              label: Waiting to upload from card
+              unit: records
+              size: 40
+              empty_hint: No status from the bridge yet
+          - type: custom:button-card
+            entity: sensor.ebike_log_samples_lost
+            show_name: false
+            show_state: false
+            show_icon: false
+            show_label: false
+            tap_action:
+              action: none
+            hold_action:
+              action: none
+            double_tap_action:
+              action: none
+            styles:
+              card:
+                - background: transparent
+                - box-shadow: none
+                - border: none
+                - border-radius: 0
+                - padding: 4px 0 8px 0
+              grid:
+                - grid-template-areas: '"body"'
+                - grid-template-columns: minmax(0, 1fr)
+              custom_fields:
+                body:
+                  - justify-self: stretch
+                  - min-width: 0
+            custom_fields:
+              body: |
+                [[[
+                  const v = entity ? parseFloat(entity.state) : NaN;
+                  const base = "padding:10px 14px;font-family:'Barlow Condensed','Arial Narrow',sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:.03em;";
+                  const small = "font:600 15px Barlow,system-ui,sans-serif;letter-spacing:.03em";
+                  if (isNaN(v)) {
+                    return `<div style="${base}border:3px solid #b3261e;color:#b3261e"><span style="${small}">Samples lost (card full)</span><div style="font-size:30px;line-height:1.1">Status unknown</div></div>`;
+                  }
+                  if (v > 0) {
+                    return `<div style="${base}background:#b3261e;color:#ffffff"><span style="${small}">Samples lost (card full)</span><div style="font-size:34px;line-height:1.1">${Math.round(v)} lost: the card is dropping data</div></div>`;
+                  }
+                  return `<div style="${base}border-top:2px solid var(--primary-text-color);padding-left:0;color:var(--primary-text-color)"><span style="${small};color:var(--secondary-text-color)">Samples lost (card full)</span><div style="font-size:34px;line-height:1.1">0 <span style="font-size:15px;color:var(--secondary-text-color)">none lost</span></div></div>`;
+                ]]]
+
+  # -------------------------------------------------------------- ANALYSIS
+  # Desktop / tablet view for reviewing a ride afterwards.
+  - title: Analysis
+    path: analysis
+    theme: Ebike Stage
+    cards:
+      - type: markdown
+        content: "## Stage profile"
+      # Rider power as a stage profile, line and fill coloured by zone.
+      # The window is the last 24 hours (apexcharts-card cannot snap to "the
+      # last ride"). The zone colour bands are fixed for FTP 150 W (83 / 113 /
+      # 135 / 158 W) because apexcharts-card cannot read a helper there; the FTP
+      # line below DOES follow the FTP helper, and the note under the chart
+      # warns when the two disagree.
+      - type: custom:apexcharts-card
+        graph_span: 24h
+        span:
+          end: minute
+        experimental:
+          color_threshold: true
+        header:
+          show: true
+          title: Rider power
+          show_states: true
+          colorize_states: true
+        yaxis:
+          - min: 0
+            max: "~200"
+            decimals: 0
+        series:
+          - entity: sensor.ebike_bridge_mobile_ebike_rider_power
+            name: Power
+            type: area
+            curve: stepline
+            stroke_width: 1
+            opacity: 1
+            color_threshold:
+              - value: 0
+                color: "#2a9d8f"
+              - value: 83
+                color: "#8ab17d"
+              - value: 113
+                color: "#ffd23f"
+              - value: 135
+                color: "#f4a259"
+              - value: 158
+                color: "#ef6a43"
+            extend_to: now
+            show:
+              legend_value: false
+          - entity: input_number.ebike_rider_ftp
+            name: FTP (placeholder until measured)
+            type: line
+            curve: stepline
+            stroke_width: 2
+            color: "#f2efe6"
+            extend_to: now
+            show:
+              in_header: false
+              legend_value: false
+        apex_config:
+          theme:
+            mode: dark
+          chart:
+            height: 340
+            background: transparent
+          stroke:
+            dashArray: [0, 6]
+          grid:
+            borderColor: "rgba(242,239,230,0.2)"
+          fill:
+            opacity: [1, 1]
+      - type: markdown
+        content: >
+          Zone colours on this chart are fixed for FTP 150 W (boundaries 83 /
+          113 / 135 / 158 W); the dashed line is your FTP helper.
+          {% set ftp = states('input_number.ebike_rider_ftp') | float(0) %}
+          {% if ftp > 0 and ftp != 150 %}**FTP is set to {{ ftp | round(0) }} W, so
+          these colours no longer match the zone numbers on the Live view.**
+          Edit the `color_threshold` values of this chart (55 / 75 / 90 / 105 %
+          of FTP).{% endif %}
+
+      - type: grid
+        columns: 2
+        square: false
+        cards:
+          - type: custom:button-card
+            template: ebike_field
+            entity: sensor.active_line_plus_last_ride_avg_power
+            variables:
+              label: Last ride, average power
+              unit: W
+              empty_hint: No ride yet
+          - type: custom:button-card
+            template: ebike_field
+            entity: sensor.active_line_plus_last_ride_max_power
+            variables:
+              label: Last ride, maximum power
+              unit: W
+              empty_hint: No ride yet
+          - type: custom:button-card
+            template: ebike_field
+            entity: sensor.ebike_last_ride_power_per_kg
+            variables:
+              label: Last ride, average per kg
+              unit: W/kg
+              decimals: 2
+              empty_hint: No ride yet
+          # The Bosch integration names this one "Avg Rider Power (All Rides)".
+          - type: custom:button-card
+            template: ebike_field
+            entity: sensor.active_line_plus_avg_rider_power_all_rides
+            variables:
+              label: Average, all rides
+              unit: W
+              empty_hint: No ride total yet
+
+      - type: markdown
+        content: "## Time in zone, today"
+      # Built with button-card because apexcharts-card 2.2.3 has no horizontal
+      # stacked bar (its chart_type is only line, scatter, pie, donut or
+      # radialBar). Each zone prints its number, name and time, so colour is
+      # never the only cue. "Not pedalling" is in no zone.
+      - type: custom:button-card
+        show_name: false
+        show_state: false
+        show_icon: false
+        show_label: false
+        tap_action:
+          action: none
+        triggers_update:
+          - sensor.ebike_zone_1_today
+          - sensor.ebike_zone_2_today
+          - sensor.ebike_zone_3_today
+          - sensor.ebike_zone_4_today
+          - sensor.ebike_zone_5_today
+        styles:
+          card:
+            - background: transparent
+            - box-shadow: none
+            - border: none
+            - border-radius: 0
+            - padding: 4px 0 8px 0
+          grid:
+            - grid-template-areas: '"body"'
+            - grid-template-columns: minmax(0, 1fr)
+          custom_fields:
+            body:
+              - justify-self: stretch
+              - min-width: 0
+        custom_fields:
+          body: |
+            [[[
+              const col = ['#2a9d8f', '#8ab17d', '#ffd23f', '#f4a259', '#ef6a43'];
+              const nm = ['Recovery', 'Endurance', 'Tempo', 'Threshold', 'Surge'];
+              const mins = [1, 2, 3, 4, 5].map(i => {
+                const s = states['sensor.ebike_zone_' + i + '_today'];
+                const h = s ? parseFloat(s.state) : NaN;
+                return isNaN(h) ? null : Math.round(h * 60);
+              });
+              const known = mins.some(m => m !== null);
+              const total = mins.reduce((a, m) => a + (m || 0), 0);
+              const fmt = m => m === null ? '--' : (m >= 60 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : m + ' min');
+              const seg = mins.map((m, i) => (m ? `<div style="flex:${m} 1 0;min-width:2px;background:${col[i]};color:#0f1b2d;display:grid;place-items:center;font:700 22px 'Barlow Condensed',sans-serif">${m / total >= 0.06 ? i + 1 : ''}</div>` : '')).join('');
+              const bar = total > 0
+                ? `<div style="display:flex;height:56px;gap:2px">${seg}</div>`
+                : `<div style="border-top:2px solid var(--primary-text-color);padding:10px 0;font:600 16px Barlow,system-ui,sans-serif;color:var(--secondary-text-color)">${known ? 'No pedalling time recorded today.' : 'Zone times are not available yet.'}</div>`;
+              const rows = mins.map((m, i) => `<div style="display:grid;grid-template-columns:36px 1fr auto 56px;gap:10px;align-items:center;padding:5px 0;border-top:1px solid var(--divider-color)"><div style="background:${col[i]};color:#0f1b2d;height:30px;display:grid;place-items:center;font:700 20px 'Barlow Condensed',sans-serif">${i + 1}</div><div style="font:600 16px Barlow,system-ui,sans-serif;color:var(--primary-text-color)">Zone ${i + 1}, ${nm[i]}</div><div style="font:700 22px 'Barlow Condensed',sans-serif;color:var(--primary-text-color)">${fmt(m)}</div><div style="font:600 14px Barlow,system-ui,sans-serif;color:var(--secondary-text-color);text-align:right">${m !== null && total > 0 ? Math.round(100 * m / total) + ' %' : ''}</div></div>`).join('');
+              return `<div style="font:600 13px Barlow,system-ui,sans-serif;letter-spacing:.05em;text-transform:uppercase;color:var(--secondary-text-color);margin-bottom:6px">Pedalling time by zone (not pedalling is not counted)</div>${bar}<div style="margin-top:10px">${rows}</div>`;
+            ]]]
+
+      - type: markdown
+        content: "## Power against speed, cadence and battery"
+      # Tap a legend entry to hide or show that series.
+      - type: custom:apexcharts-card
+        graph_span: 3h
+        span:
+          end: minute
+        header:
+          show: false
+        yaxis:
+          - id: power
+            min: 0
+            decimals: 0
+          - id: speed
+            opposite: true
+            min: 0
+            decimals: 0
+          - id: cadence
+            opposite: true
+            min: 0
+            decimals: 0
+          - id: soc
+            opposite: true
+            min: 0
+            max: 100
+            decimals: 0
+        series:
+          - entity: sensor.ebike_bridge_mobile_ebike_rider_power
+            name: Power (W)
+            yaxis_id: power
+            color: "#f2efe6"
+            stroke_width: 2
+          - entity: sensor.ebike_bridge_mobile_ebike_speed
+            name: Speed (km/h)
+            yaxis_id: speed
+            color: "#8ab17d"
+            stroke_width: 2
+          - entity: sensor.ebike_bridge_mobile_ebike_cadence
+            name: Cadence (rpm)
+            yaxis_id: cadence
+            color: "#f4a259"
+            stroke_width: 2
+          - entity: sensor.ebike_bridge_mobile_ebike_battery_soc_live
+            name: Battery (%)
+            yaxis_id: soc
+            color: "#78c2ff"
+            stroke_width: 2
+        apex_config:
+          theme:
+            mode: dark
+          chart:
+            height: 320
+            background: transparent
+          stroke:
+            dashArray: [0, 8, 3, 12]
+          grid:
+            borderColor: "rgba(242,239,230,0.2)"
+
+      - type: markdown
+        content: "## Stages compared"
+      - type: custom:apexcharts-card
+        chart_type: line
+        graph_span: 30d
+        span:
+          end: day
+        header:
+          show: false
+        yaxis:
+          - min: 0
+            decimals: 0
+        series:
+          - entity: sensor.active_line_plus_last_ride_avg_power
+            name: Average power (W)
+            type: column
+            color: "#ffd23f"
+            group_by: { func: max, duration: 1d }
+          - entity: sensor.active_line_plus_last_ride_max_power
+            name: Maximum power (W)
+            type: column
+            color: "#a3b4cc"
+            group_by: { func: max, duration: 1d }
+          - entity: sensor.active_line_plus_avg_rider_power_all_rides
+            name: Average, all rides (W)
+            type: line
+            color: "#f2efe6"
+            stroke_width: 2
+            group_by: { func: last, duration: 1d }
+        apex_config:
+          theme:
+            mode: dark
+          chart:
+            height: 300
+            background: transparent
+          stroke:
+            dashArray: [0, 0, 6]
+          grid:
+            borderColor: "rgba(242,239,230,0.2)"
+
+      - type: markdown
+        content: "## Fitness"
+      - type: grid
+        columns: 1
+        square: false
+        cards:
+          - type: vertical-stack
+            cards:
+              # VO2max is an ESTIMATE. The badge sits beside the number whether
+              # or not a number exists; with no number the card says why.
+              - type: custom:button-card
+                entity: sensor.ebike_vo2max_estimate
+                show_name: false
+                show_state: false
+                show_icon: false
+                show_label: false
+                tap_action:
+                  action: more-info
+                styles:
+                  card:
+                    - background: transparent
+                    - box-shadow: none
+                    - border: none
+                    - border-radius: 0
+                    - border-top: 2px solid var(--primary-text-color)
+                    - padding: 8px 0 14px 0
+                  grid:
+                    - grid-template-areas: '"body"'
+                    - grid-template-columns: minmax(0, 1fr)
+                  custom_fields:
+                    body:
+                      - justify-self: stretch
+                      - min-width: 0
+                custom_fields:
+                  body: |
+                    [[[
+                      const v = entity ? parseFloat(entity.state) : NaN;
+                      const ok = !isNaN(v);
+                      const attrs = (entity && entity.attributes) || {};
+                      const src = ok ? (attrs.source === 'watch' ? 'Value from the watch' : 'Estimated from your best 5 minute power') : 'Needs a hard 5 minute effort';
+                      return `<div style="font:600 13px Barlow,system-ui,sans-serif;letter-spacing:.05em;text-transform:uppercase;color:var(--secondary-text-color)">VO2max, estimated</div>
+                      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+                        <span style="font:700 104px/1 'Barlow Condensed','Arial Narrow',sans-serif;color:var(--primary-text-color)">${ok ? Math.round(v) : '--'}</span>
+                        <div>
+                          <div style="font:600 18px Barlow,system-ui,sans-serif;color:var(--secondary-text-color)">ml/kg/min</div>
+                          <div style="margin-top:4px;display:inline-block;padding:2px 8px;background:#ffd23f;color:#0f1b2d;font:700 13px Barlow,system-ui,sans-serif;letter-spacing:.04em">ESTIMATE, NOT MEASURED</div>
+                        </div>
+                      </div>
+                      <div style="font:600 15px Barlow,system-ui,sans-serif;color:var(--primary-text-color)">${src}</div>`;
+                    ]]]
+              - type: custom:apexcharts-card
+                chart_type: line
+                graph_span: 12w
+                span:
+                  end: day
+                header:
+                  show: false
+                series:
+                  - entity: sensor.ebike_vo2max_estimate
+                    name: VO2max estimate
+                    color: "#ffd23f"
+                    stroke_width: 3
+                    statistics:
+                      type: max
+                      period: day
+                      align: end
+                    show:
+                      extremas: true
+                apex_config:
+                  theme:
+                    mode: dark
+                  chart:
+                    height: 220
+                    background: transparent
+                  grid:
+                    borderColor: "rgba(242,239,230,0.2)"
+          - type: vertical-stack
+            cards:
+              - type: entities
+                title: Rider profile
+                show_header_toggle: false
+                entities:
+                  - entity: input_number.ebike_rider_weight
+                    name: Weight
+                  - entity: input_number.ebike_rider_age
+                    name: Age
+                  - entity: input_number.ebike_rider_ftp
+                    name: FTP (placeholder)
+                  - entity: input_number.ebike_rider_rest_hr
+                    name: Resting heart rate
+              - type: markdown
+                content: >
+                  FTP is a placeholder until you set yours. It moves the zone
+                  boundaries on the Live view and the time in zone; the colour
+                  bands on the stage profile are fixed for FTP 150 W.
+
+
+                  VO2max, estimated: 10.8 x best 5 minute rider power (W) /
+                  weight (kg) + 7, or the watch value if
+                  sensor.xiaomi_watch_5_vo2max exists. It is a rough guide, not
+                  a measurement. Power here is your own output, not motor assist.
+
+
+                  {% set rest = states('input_number.ebike_rider_rest_hr') | float(0) %}
+                  {% set age = states('input_number.ebike_rider_age') | float(0) %}
+                  {% if rest > 0 and age > 0 %}Heart-rate cross-check, not your
+                  VO2max: about {{ (15.3 * (208 - 0.7 * age) / rest) | round(1) }}
+                  ml/kg/min by the Uth method (15.3 x maximum heart rate / resting
+                  heart rate, maximum from age). Use it only to sanity-check the
+                  estimate above.{% else %}Heart-rate cross-check: -- (set age and
+                  resting heart rate).{% endif %}
+
+  # ---------------------------------------------------------------- ROUTES
+  # This repo's own cards (upstream's code, left as is).
+  - title: Routes
+    path: routes
+    theme: Ebike Stage
+    cards:
+      - type: custom:bosch-ebike-dashboard-card
+      - type: custom:bosch-ebike-3d-map-card
+      - type: custom:bosch-ebike-heatmap-card
+        height: 500

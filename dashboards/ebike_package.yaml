@@ -60,6 +60,7 @@ sensor:
     precision: 0
 
   # Time spent in each power zone today (hours; the dashboard shows minutes).
+  # Not pedalling (zone state 0) is in none of them.
   - platform: history_stats
     name: eBike Zone 1 Today
     unique_id: ebike_zone_1_today
@@ -103,13 +104,20 @@ sensor:
 
 template:
   # Zone 1-5 from live rider power and FTP (55 / 75 / 90 / 105 % of FTP).
+  # State 0 means "not pedalling" (rider power under 1 W, or cadence 0): it is
+  # not a zone, so standing still never counts as Zone 1 time. "unknown" means
+  # no power reading at all (bike not linked). tests/test_dashboard_package.py
+  # renders this template; keep the two in step.
   - sensor:
       - name: eBike Power Zone
         unique_id: ebike_power_zone
         state: >
           {% set p = states('sensor.ebike_bridge_mobile_ebike_rider_power') | float(none) %}
+          {% set c = states('sensor.ebike_bridge_mobile_ebike_cadence') | float(none) %}
           {% set f = states('input_number.ebike_rider_ftp') | float(150) %}
-          {% if p is none %}unknown{% else %}
+          {% if p is none %}unknown
+          {% elif p < 1 or (c is not none and c < 1) %}0
+          {% else %}
           {% set x = p / f %}
           {{ 1 if x < 0.55 else 2 if x < 0.75 else 3 if x < 0.90 else 4 if x < 1.05 else 5 }}
           {% endif %}
