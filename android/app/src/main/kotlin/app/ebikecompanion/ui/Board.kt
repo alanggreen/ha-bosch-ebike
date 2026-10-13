@@ -1,6 +1,7 @@
 package app.ebikecompanion.ui
 
 import app.ebikecompanion.ble.BridgeLink
+import app.ebikecompanion.sync.AckSub
 import app.ebikecompanion.sync.SyncEngine
 
 enum class MarkState { OK, WARN, OFF, BAD, UNKNOWN }
@@ -37,6 +38,11 @@ object Board {
     /** The phone's own upload to Home Assistant: independent of the ESP32 link. */
     fun upload(u: SyncEngine.Ui): BoardLine = when {
         !u.configured -> BoardLine("phone", "Phone upload", MarkState.OFF, "Not set up", "Open Settings")
+        // Connected, but the broker will not tell this phone what Home Assistant stored: records stay queued, never "Online".
+        u.mqttUp && (u.acks == AckSub.DENIED || u.acks == AckSub.FAILED) -> BoardLine(
+            "phone", "Phone upload", MarkState.WARN, "No confirmation",
+            (if (u.queued > 0) "${u.queued} waiting: " else "") + "the broker will not let this phone hear back",
+        )
         u.queued > 0 && u.mqttUp -> BoardLine("phone", "Phone upload", MarkState.WARN, "${u.queued} waiting", "Uploading to Home Assistant")
         u.queued > 0 -> BoardLine("phone", "Phone upload", MarkState.WARN, "${u.queued} waiting", brokerDown(u))
         u.mqttUp -> BoardLine("phone", "Phone upload", MarkState.OK, "Online", "${u.uploaded} records uploaded")

@@ -1,5 +1,6 @@
 package app.ebikecompanion.sync
 
+import android.util.Log
 import org.eclipse.paho.client.mqttv3.IMqttActionListener
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken
 import org.eclipse.paho.client.mqttv3.IMqttToken
@@ -19,7 +20,7 @@ import java.util.concurrent.TimeUnit
  */
 class MqttRelay(private val s: Settings, private val clientId: String, private val listener: Listener) {
     interface Listener {
-        fun onState(up: Boolean, error: String)
+        fun onState(up: Boolean, error: String, acks: AckSub)
         fun onAck(ack: RecordJson.Ack)
     }
 
@@ -31,7 +32,10 @@ class MqttRelay(private val s: Settings, private val clientId: String, private v
 
     fun start() = retry.execute(::connect)
 
+    private fun log(msg: String) { Log.i(MqttLog.TAG, msg) }
+
     fun stop() {
+        log("relay stop")
         stopped = true
         up = false
         retry.shutdownNow()
@@ -42,18 +46,37 @@ class MqttRelay(private val s: Settings, private val clientId: String, private v
     private fun connect() {
         if (stopped) return
         runCatching { client?.close() }
+        log(MqttLog.connectAttempt(s.uri))
         val c = MqttAsyncClient(s.uri, clientId, MemoryPersistence())
         client = c
         c.setCallback(object : MqttCallbackExtended {
             override fun connectComplete(reconnect: Boolean, serverURI: String?) {
-                runCatching { c.subscribe(s.ackTopic, 1) }
                 up = true
-                listener.onState(true, "")
+                log("connect success (reconnect=$reconnect); subscribing to the ack topic")
+                listener.onState(true, "", AckSub.PENDING)
+                try {
+                    c.subscribe(s.ackTopic, 1, null, object : IMqttActionListener {
+                        override fun onSuccess(asyncActionToken: IMqttToken?) {
+                            val r = SubscribeResult.classify(asyncActionToken?.grantedQos, null)
+                            log("ack subscribe: $r granted=${asyncActionToken?.grantedQos?.joinToString(",")}")
+                            listener.onState(true, SubscribeResult.reason(r), r)
+                        }
+
+                        override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
+                            log(MqttLog.failure("ack subscribe failed", exception))
+                            listener.onState(true, SubscribeResult.reason(AckSub.FAILED, exception), AckSub.FAILED)
+                        }
+                    })
+                } catch (e: Exception) {
+                    log(MqttLog.failure("ack subscribe failed", e))
+                    listener.onState(true, SubscribeResult.reason(AckSub.FAILED, e), AckSub.FAILED)
+                }
             }
 
             override fun connectionLost(cause: Throwable?) {
                 up = false
-                listener.onState(false, cause?.message ?: "Connection lost")
+                log(MqttLog.failure("connection lost; the client reconnects by itself", cause))
+                listener.onState(false, cause?.message ?: "Connection lost", AckSub.PENDING)
             }
 
             override fun messageArrived(topic: String?, message: MqttMessage?) {
@@ -75,7 +98,8 @@ class MqttRelay(private val s: Settings, private val clientId: String, private v
             override fun onSuccess(asyncActionToken: IMqttToken?) {}
             override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
                 up = false
-                listener.onState(false, exception?.message ?: "Cannot connect")
+                log(MqttLog.failure("connect failed, retry in 15 s", exception))
+                listener.onState(false, exception?.message ?: "Cannot connect", AckSub.PENDING)
                 // automatic reconnect only starts after a first success, so retry the first connect ourselves
                 if (!stopped) runCatching { retry.schedule(::connect, 15, TimeUnit.SECONDS) }
             }

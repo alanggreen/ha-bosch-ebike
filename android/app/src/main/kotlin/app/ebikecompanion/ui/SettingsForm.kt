@@ -1,5 +1,6 @@
 package app.ebikecompanion.ui
 
+import app.ebikecompanion.sync.AckSub
 import app.ebikecompanion.sync.Settings
 
 /** What the rider has typed on the Settings screen, as plain values (no Compose types, so it is unit tested). */
@@ -104,8 +105,12 @@ object SettingsForm {
     }
 
     /** [savedHost] is non-null only right after the rider saved: the address that was used (blank if none). */
-    fun connectionLine(configured: Boolean, savedHost: String?, mqttUp: Boolean, queued: Int, error: String): Line = when {
+    fun connectionLine(configured: Boolean, savedHost: String?, mqttUp: Boolean, queued: Int, error: String, acks: AckSub = AckSub.OK): Line = when {
         !configured -> Line("Not set up yet.", "Enter an address and press Save and connect.")
+        mqttUp && (acks == AckSub.DENIED || acks == AckSub.FAILED) -> Line(
+            "Connected, but no replies from the broker.",
+            "The broker would not let this phone listen for acknowledgements. Records stay saved and are not counted as uploaded.",
+        )
         mqttUp -> Line("Connected to the broker.", if (queued == 1) "1 record waiting." else "$queued records waiting.")
         savedHost != null && error.isBlank() ->
             if (savedHost.isBlank()) Line("Saved. No address is set for the network you are on now.", "Add the other address, or join a home network.")

@@ -79,4 +79,17 @@ class BoardTest {
         assertEquals("SD card full. 12 older samples overwritten.", Board.banner(u, 2000))
         assertEquals("Card full" to "12 older samples overwritten", Board.footer(u, 2000))
     }
+
+    @Test fun uploadStateMapsConnectedAndSubscribeResult() {
+        fun up(mqtt: Boolean, acks: app.ebikecompanion.sync.AckSub, queued: Int = 0) =
+            Board.upload(app.ebikecompanion.sync.SyncEngine.Ui(configured = true, mqttUp = mqtt, queued = queued, acks = acks))
+        assertEquals("Online", up(true, app.ebikecompanion.sync.AckSub.OK).value)
+        for (a in listOf(app.ebikecompanion.sync.AckSub.DENIED, app.ebikecompanion.sync.AckSub.FAILED)) {
+            val r = up(true, a, 3)
+            assertEquals(MarkState.WARN, r.state)
+            assertEquals("No confirmation", r.value)
+            assertEquals("3 waiting: the broker will not let this phone hear back", r.sub)
+        }
+        assertEquals("Offline", up(false, app.ebikecompanion.sync.AckSub.DENIED).value)
+    }
 }

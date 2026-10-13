@@ -8,10 +8,12 @@ import android.net.NetworkRequest
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.SystemClock
+import android.util.Log
 import app.ebikecompanion.ble.BridgeLink
 import app.ebikecompanion.ble.Commands
 import app.ebikecompanion.ble.Protocol
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +54,7 @@ class SyncEngine(
         val error: String = "",
         val ssid: String? = null, // the Wi-Fi name as far as Android lets the app read it
         val onHome: Boolean = false, // the relay is using the home address
+        val acks: AckSub = AckSub.PENDING, // can Home Assistant's acknowledgements reach this phone? Only OK means yes.
     )
 
     private val _ui = MutableStateFlow(Ui())
@@ -71,13 +74,31 @@ class SyncEngine(
     private var uploaded = 0L
     private var mqttUp = false
     private var error = ""
+    private var acks = AckSub.PENDING
+    private var relayPath = NetPath()
+    private var lastRestartAt = 0L
+    private var recheckJob: Job? = null
+    private var defaultCallback: ConnectivityManager.NetworkCallback? = null
+
+    private fun log(msg: String) { Log.i(MqttLog.TAG, msg) }
 
     fun start() {
         store = RecordStore(File(ctx.filesDir, "ride")).also { it.load() }
         _settings.value = settingsStore.load()
         link.listener = this
         watchWifi()
-        scope.launch { mutex.withLock { startRelay() }; tickLoop() }
+        watchDefaultNetwork()
+        scope.launch { mutex.withLock { startRelay("app start") }; tickLoop() }
+    }
+
+    /** Unregisters the network callbacks and closes the MQTT session (the records stay in the durable queue). */
+    fun stop() {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java)
+        runCatching { cm?.unregisterNetworkCallback(wifiCallback) }
+        defaultCallback?.let { cb -> runCatching { cm?.unregisterNetworkCallback(cb) } }
+        defaultCallback = null
+        recheckJob?.cancel()
+        relay?.stop(); relay = null
     }
 
     fun applySettings(s: Settings) {
@@ -87,18 +108,22 @@ class SyncEngine(
                 _settings.value = s
                 relay?.stop(); relay = null
                 mqttUp = false; error = ""; sentCount = 0
-                startRelay()
+                startRelay("settings applied")
                 publishUi()
             }
         }
     }
 
-    private fun startRelay() {
+    private fun startRelay(reason: String) {
         val s = _settings.value
         if (!s.configured) { publishUi(); return }
         val ssid = currentSsid()
         val resolved = s.copy(host = s.effectiveHost(ssid))
         relayHost = resolved.host
+        relayPath = currentPath()
+        lastRestartAt = SystemClock.elapsedRealtime()
+        acks = AckSub.PENDING
+        log(MqttLog.relayStart(resolved, reason, relayPath))
         relay = MqttRelay(resolved, settingsStore.clientId(), this).also { it.start() }
         publishUi()
     }
@@ -127,27 +152,72 @@ class SyncEngine(
         override fun onLost(network: Network) = networkChanged(network, null, lost = true)
     }
 
+    /** The kinds of network the phone has now, from the transports of every network that offers the internet. */
+    private fun currentPath(): NetPath = runCatching {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return NetPath()
+        val caps = cm.allNetworks.mapNotNull { cm.getNetworkCapabilities(it) }
+            .filter { it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) }
+        NetPath(
+            wifi = caps.any { it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) },
+            cellular = caps.any { it.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) },
+            vpn = caps.any { it.hasTransport(NetworkCapabilities.TRANSPORT_VPN) },
+        )
+    }.getOrDefault(NetPath())
+
     private fun networkChanged(network: Network, name: String?, lost: Boolean) {
         scope.launch {
             mutex.withLock {
                 if (lost) { wifiNames.remove(network); if (wifiNetwork == network) wifiNetwork = null }
                 else { wifiNetwork = network; if (name != null) wifiNames[network] = name }
-                reresolveHost()
+                reresolveHost("Wi-Fi changed")
             }
         }
     }
 
-    /** Called after the location permission is granted or the Wi-Fi changes: restart the relay only if the host would differ. */
-    fun recheckNetwork() { scope.launch { mutex.withLock { reresolveHost() } } }
+    /** Any default-network change (VPN up or down, Wi-Fi to mobile data...): look again after a short pause, events come in bursts. */
+    private val defaultNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = scheduleRecheck(RelayRestart.DEBOUNCE_MS)
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) = scheduleRecheck(RelayRestart.DEBOUNCE_MS)
+        override fun onLost(network: Network) = scheduleRecheck(RelayRestart.DEBOUNCE_MS)
+    }
 
-    private fun reresolveHost() {
+    private fun scheduleRecheck(delayMs: Long) {
+        recheckJob?.cancel()
+        recheckJob = scope.launch {
+            delay(delayMs)
+            mutex.withLock { reresolveHost("network change") }
+        }
+    }
+
+    private fun watchDefaultNetwork() {
+        runCatching {
+            val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return
+            cm.registerDefaultNetworkCallback(defaultNetworkCallback)
+            defaultCallback = defaultNetworkCallback
+        }
+    }
+
+    /** Called after the location permission is granted or the Wi-Fi changes: restart the relay only if the host would differ. */
+    fun recheckNetwork() { scope.launch { mutex.withLock { reresolveHost("network re-check") } } }
+
+    private fun reresolveHost(reason: String) {
         val s = _settings.value
         if (!s.configured || relay == null) { publishUi(); return }
-        if (s.effectiveHost(currentSsid()) == relayHost) { publishUi(); return }
-        // Same as a settings change: a new session; everything unacknowledged is published again, repeats are ignored by HA.
-        relay?.stop(); relay = null
-        mqttUp = false; error = ""; sentCount = 0
-        startRelay()
+        val newHost = s.effectiveHost(currentSsid())
+        val newPath = currentPath()
+        val since = SystemClock.elapsedRealtime() - lastRestartAt
+        when (RelayRestart.decide(relayHost, newHost, relayPath, newPath, mqttUp, since)) {
+            RelayRestart.Decision.KEEP -> publishUi()
+            RelayRestart.Decision.LATER -> { scheduleRecheck(RelayRestart.MIN_INTERVAL_MS - since + 200); publishUi() }
+            RelayRestart.Decision.RESTART -> {
+                // Same as a settings change: a new session; everything unacknowledged is published again, repeats are ignored by HA.
+                // The last error stays until the new attempt gives a result.
+                val why = if (newHost != relayHost) "$reason: address changed" else "$reason: ${relayPath.describe()} -> ${newPath.describe()} while not connected"
+                relay?.stop(); relay = null
+                mqttUp = false; sentCount = 0
+                startRelay(why)
+            }
+        }
     }
 
     private fun watchWifi() {
@@ -167,7 +237,9 @@ class SyncEngine(
     private fun tick() {
         val now = SystemClock.elapsedRealtime()
         if (linkReady && !receiving && now - lastSyncRequest > SYNC_INTERVAL_MS) requestSync(now)
-        if (sentCount > 0 && now - lastAckAt > ACK_TIMEOUT_MS) sentCount = 0 // nothing acknowledged: publish them again
+        if (sentCount > 0 && now - lastAckAt > ACK_TIMEOUT_MS) { // nothing acknowledged: publish them again
+            log(MqttLog.ackTimeout(sentCount)); sentCount = 0
+        }
         pump()
         publishUi()
     }
@@ -214,11 +286,15 @@ class SyncEngine(
 
     // ---- Home Assistant side ---------------------------------------------------------
 
-    override fun onState(up: Boolean, error: String) {
+    override fun onState(up: Boolean, error: String, acks: AckSub) {
         scope.launch {
             mutex.withLock {
-                mqttUp = up; this@SyncEngine.error = error
-                if (up) { sentCount = 0; pump() } // the old session may have lost what was in flight
+                mqttUp = up; this@SyncEngine.error = error; this@SyncEngine.acks = acks
+                // A new session (acks still PENDING): the old one may have lost what was in flight. The subscribe result
+                // that follows must not reset it again.
+                if (up && acks == AckSub.PENDING) sentCount = 0
+                if (up) pump()
+                if (!up) scheduleRecheck(RelayRestart.DEBOUNCE_MS) // the path may have changed under a dropped session
                 publishUi()
             }
         }
@@ -229,6 +305,7 @@ class SyncEngine(
             mutex.withLock {
                 if (!RecordJson.ackTrusted(ack, _settings.value.ackSecret)) return@withLock
                 val dropped = store.ackThrough(ack.id)
+                log(MqttLog.acked(maxOf(dropped, 0)))
                 if (dropped >= 0) {
                     sentCount = maxOf(0, sentCount - dropped)
                     lastAckAt = SystemClock.elapsedRealtime()
@@ -252,11 +329,13 @@ class SyncEngine(
         if (!r.up) return
         val n = minOf(store.size, WINDOW)
         if (sentCount == 0 && n > 0) lastAckAt = SystemClock.elapsedRealtime()
+        var published = 0
         while (sentCount < n) {
             val rec = Protocol.parseRecord(store.get(sentCount)) ?: break
             r.publish(RecordJson.toJson(rec))
-            sentCount++
+            sentCount++; published++
         }
+        if (published > 0) log(MqttLog.published(published, store.size))
     }
 
     private fun publishUi() {
@@ -264,7 +343,7 @@ class SyncEngine(
         val ssid = wifiNetwork?.let { wifiNames[it] }
         _ui.value = Ui(
             s.configured, mqttUp && relay != null, if (::store.isInitialized) store.size else 0, uploaded, receiving, error,
-            ssid, relay != null && s.homeIp.isNotBlank() && relayHost == s.homeIp.trim(),
+            ssid, relay != null && s.homeIp.isNotBlank() && relayHost == s.homeIp.trim(), acks,
         )
     }
 

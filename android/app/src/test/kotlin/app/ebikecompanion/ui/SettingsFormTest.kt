@@ -102,6 +102,18 @@ class SettingsFormTest {
         assertFalse(SettingsForm.connectionLine(true, null, false, 0, "").more.contains("Reason"))
     }
 
+    @Test fun connectedWithoutAcknowledgementsIsNotPlainConnected() {
+        val ok = SettingsForm.connectionLine(true, null, true, 2, "", app.ebikecompanion.sync.AckSub.OK)
+        assertEquals("Connected to the broker.", ok.text)
+        for (a in listOf(app.ebikecompanion.sync.AckSub.DENIED, app.ebikecompanion.sync.AckSub.FAILED)) {
+            val l = SettingsForm.connectionLine(true, null, true, 2, "x", a)
+            assertEquals("Connected, but no replies from the broker.", l.text)
+            assertTrue(l.more.contains("would not let this phone listen for acknowledgements"))
+        }
+        // not connected: the old wording, whatever the subscribe state was
+        assertEquals("Not connected to the broker.", SettingsForm.connectionLine(true, "h", false, 0, "e", app.ebikecompanion.sync.AckSub.DENIED).text)
+    }
+
     @Test fun shortErrorCollapsesAndCuts() {
         assertEquals("a b", SettingsForm.shortError("  a \n b "))
         assertEquals("x".repeat(80) + "...", SettingsForm.shortError("x".repeat(200)))

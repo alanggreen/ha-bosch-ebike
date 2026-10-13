@@ -379,7 +379,7 @@ fun SettingsScreen(current: Settings, bridge: BridgeLink.Ui, now: Long, up: Sync
 
     // ---- Pinned bar: Save, unsaved state, connection result ----
     val saveBar: @Composable () -> Unit = {
-        val line = SettingsForm.connectionLine(current.configured, savedHost, up.mqttUp, up.queued, up.error)
+        val line = SettingsForm.connectionLine(current.configured, savedHost, up.mqttUp, up.queued, up.error, up.acks)
         val texts: @Composable ColumnScope.() -> Unit = {
             if (dirty && savedHost == null) Text("Not saved", style = MaterialTheme.typography.labelLarge, color = ink)
             Text(line.text, style = MaterialTheme.typography.bodyMedium, color = ink, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
