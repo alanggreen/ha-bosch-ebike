@@ -43,55 +43,56 @@ Custom 128-bit service. All characteristics require an encrypted, bonded link (L
 - Standard **Cycling Power Service** can be added on the same link so off-the-shelf apps can display power.
 
 ### 2.2 Android app
-- Kotlin, Jetpack Compose UI, Room (local database), foreground service for BLE (screen off, pocket).
+- Kotlin, Jetpack Compose UI, plain files for records and test results (no Room; see [VO2_TEST_SPEC.md](VO2_TEST_SPEC.md) section 6), foreground service for BLE (screen off, pocket).
 - Permissions: Bluetooth connect/scan, notifications, foreground service (connected device), battery-optimisation exemption, and fine location (optional, asked from Settings with its reason shown; used only to read the Wi-Fi name so the broker address can switch between the home IP and the remote host; without it, or with location services off, the remote host is used and Settings says so). The Wi-Fi name is read through a Wi-Fi `NetworkCallback` registered with `FLAG_INCLUDE_LOCATION_INFO` and cached per network; when the name changes the MQTT session is restarted only if the chosen host differs (unacknowledged records are published again, which the receiver ignores). A second, unfiltered default-network callback (VPN or Tailscale up or down, Wi-Fi to mobile data) re-checks after a 1.5 s debounce: the session restarts when the host differs, or when the path (`NetPath`: wifi, cellular, vpn) changed while the relay is not connected; a healthy connected relay is never restarted, and restarts are at least 5 s apart (`RelayRestart.decide`). The last error stays on screen until the new attempt gives a result. If the broker refuses or fails the acknowledgement subscription, the relay is connected but Phone upload shows "No confirmation" (warning) and Settings says "Connected, but no replies from the broker.", never plain Online; records stay queued. Everything is logged under the tag `EbikeMqtt` (host:port, path kind, connect and subscribe results, counts; never passwords, the secret, MACs or record contents). Settings > Home networks has two ruled sections: "Saved home networks (n of 5)" first (with the Add-a-name field, "Connected now" marked, Delete), then "Nearby networks" with a secondary Scan button. Scan lists cached `WifiManager` scan results at once (de-duplicated, hidden names dropped, strongest first, connected network marked, saved ones shown muted as "Saved") and asks for a fresh scan best-effort, showing "Scanning..." with a progress bar until results arrive or 10 s pass, then a live-region line such as "Updated 14:32:07, 6 networks" or, if Android refused the scan, a plain throttling message (`CHANGE_WIFI_STATE`; Android throttles it, and Settings says so when it refuses or finds nothing). It needs the same fine location permission and location services as the Wi-Fi name; `NEARBY_WIFI_DEVICES` is not used, as it would be a second prompt and the connected name still needs fine location. The `neverForLocation` flag stays on `BLUETOOTH_SCAN` only. Companion Device Manager pairing for the ESP.
-- Modules: `BridgeLink` (ESP GATT), `HrLink` (chest strap, Wear OS), `Relay` (MQTT or HTTPS to Home Assistant), `RideEngine` (metrics, zones), `Vo2Coach` (test state machine, estimate), `Store`.
+- Modules: `BridgeLink` (ESP GATT), `HrLink` (chest strap, Wear OS), `Relay` (MQTT or HTTPS to Home Assistant), `RideEngine` (metrics, zones), `Vo2Coach` (test state machine, estimate; see [VO2_TEST_SPEC.md](VO2_TEST_SPEC.md)), `Store`.
 
 ### 2.3 Home Assistant side
-Reuse `offline_backfill` unchanged: the app publishes the same JSON to `ebike-bridge-mobile/ride_log` and listens for the same acks (signed acks recommended). Test results are published retained to `ebike/vo2/result` and become a sensor.
+Reuse `offline_backfill` unchanged: the app publishes the same JSON to `ebike-bridge-mobile/ride_log` and listens for the same acks (signed acks recommended). Test results are published **not retained** (QoS 1) to `ebike/vo2/result`, acknowledged on `ebike/vo2/result/ack`, and become a sensor through a small receiver (DRAFT contract: [../contracts/VO2_RESULT.md](../contracts/VO2_RESULT.md)); a retained message would lose history and cannot confirm storage.
 
 ## 3. Screens
 
-1. **Status** (home screen). One row per link with a plain state: ESP bridge, Bike, SD card (ok/missing/failing, free space), Clock, Home Assistant, Backlog (records waiting, last upload), Heart-rate sensor, Phone battery. A red banner replaces the screen if the SD card is failing or the bike link is down while moving. Connect and Pair phone first check that Bluetooth is on: if not, Android's "turn on Bluetooth" dialog opens (no extra permission beyond `BLUETOOTH_CONNECT`); accepting continues the action, declining leaves the ESP32 bridge row and the count plate saying "Bluetooth is off. Turn Bluetooth on to connect to the bridge", and switching it off while connected explains the dropped link the same way.
+1. **Status** (home screen). One row per link with a plain state: ESP bridge, Bike, SD card (ok/missing/failing, free space), Clock, Home Assistant, Backlog (records waiting, last upload), Heart-rate sensor, Phone battery. A fault banner (red) is shown if the SD card is failing or the bike link is down while moving; it never replaces the screen, and during a test it takes its own reserved line (spec 3.3). Connect and Pair phone first check that Bluetooth is on: if not, Android's "turn on Bluetooth" dialog opens (no extra permission beyond `BLUETOOTH_CONNECT`); accepting continues the action, declining leaves the ESP32 bridge row and the count plate saying "Bluetooth is off. Turn Bluetooth on to connect to the bridge", and switching it off while connected explains the dropped link the same way.
 2. **Ride.** Large live power with zone bar, plus a metric grid the rider chooses. Available: rider power (now, 3 s, 30 s, 5 min avg), W/kg, zone, cadence, speed, battery %, odometer, distance, ride time, heart rate and % of HRmax, HR drift. Not available from the bike: motor power, assist level, elevation (phone GPS or barometer can add this).
-3. **VO2max test.** Guided flow, section 4.
-4. **History.** Rides (from Home Assistant), tests with quality score, trend of estimated VO2max with a visible error band.
-5. **Settings.** Rider profile (age, weight, sex, resting HR, HRmax method), sensors (ESP pairing, chest strap, watch), Home Assistant connection, alert preferences.
+3. **Test** (VO2max). Guided flow, section 4 and the spec. **History of tests is a section of this tab**, not a separate screen (ride history stays in Home Assistant).
+4. **Settings.** Rider profile (age, weight, sex, resting HR), sensors (ESP pairing, chest strap with its "mine" mark), Home Assistant connection, alert preferences, and a locked **Safety limits** group (heart-rate ceiling and HRmax method, editable only through a physician sign-off, bounded by an absolute age cap; spec 8.4). The HRmax method is no longer part of the rider profile.
+
+There are **four tabs** (Status, Ride, Test, Settings; rail in landscape), not five screens: this supersedes the earlier five-screen list (spec 3).
 
 Design rules: glanceable, big numerals, daylight contrast, audio-first during tests (eyes on the road), one-handed use, never block the Status banner.
 
 ## 4. VO2max test supervision
 
 ### 4.1 Which test
-A **submaximal two-stage cycle test**, not a maximal one. The research (section 5) favours the Ekblom-Bak approach: a standard low work rate stage followed by one individually chosen higher work rate, using the change in heart rate per unit change in power. It was validated in ages 20-86, has about half the error of the Astrand test, and test-retest shows no mean drift. A maximal test is not recommended without medical supervision for a 67-year-old.
+A **submaximal two-stage cycle test**, not a maximal one, modelled on the Ekblom-Bak (EB) test: a standard 30 W stage followed by one higher work rate, using the change in heart rate per unit change in power. Validated in ages 21-86 (women) / 20-84 (men) **on a mechanically braked laboratory ergometer**, about half the error of the Astrand test. A maximal test is not recommended without medical supervision for a 67-year-old.
 
-**Before coding, the published equation and exact stage rules must be taken from Ekblom-Bak et al. (2014, 2016) and verified.** This document does not copy coefficients from memory. The app will also compute a transparent second estimate (individual HR-power line extrapolated to age-predicted HRmax) so the two can be compared.
+The equation and stage rules are now verified from the papers (Bjorkman 2016, PMID 27311582; Karolinska manual; Vaisanen 2020, PMID 31820103; Ekblom 2021, PMID 34906224) and live in [VO2_TEST_SPEC.md](VO2_TEST_SPEC.md) section 2. The earlier plan of a second estimate (HR line extrapolated to age-predicted HRmax) is **dropped**: the EB equation needs no HRmax. The e-bike/road adaptation is **not validated**, so the output is shown as an "Ekblom-Bak style estimate", never a measured VO2max.
 
 ### 4.2 Supervision flow (state machine)
-1. **Readiness check:** health questions (PAR-Q+ style) with an explicit stop if any answer is "yes" and medical clearance is missing; HR sensor quality; bike linked; assist mode recorded; flat, quiet road or path; same route and time of day as last time.
-2. **Resting HR:** 3 minutes seated and still.
-3. **Warm-up:** 5 min easy, power within a loose band.
-4. **Stage 1:** 4 min at the standard low power. Live target band (for example +/-10% of target). Audio: "start now", "a little harder / easier", "30 seconds left".
-5. **Stage 2:** 4 min at a higher power chosen from stage 1 so that steady-state HR lands in the moderate range of the published protocol.
-6. **Cool-down:** 3-5 min easy.
-7. **Result:** estimate, plausible range, quality score, and whether to repeat.
+1. **Readiness check:** health questions (PAR-Q+ style) with an explicit stop if any answer is "yes" and medical clearance is missing; beta-blocker question; HR sensor quality; bike linked; assist mode recorded; flat, quiet road or path; same route and time of day as last time; beep check.
+2. **Seated rest:** no warm-up (the EB test starts from resting heart rate). The older-adult validation used 15 min seated rest (configurable, flagged for review); HR near resting is a readiness check.
+3. **Stage 1:** 4 min at 30 W (0.5 kp), 60 rpm, the same for everyone. Audio: "start now", "30 seconds left".
+4. **Stage 2:** 4 min immediately after, **no rest**, at a load **chosen before the test** from the manual's rough guide (sex and training status), aiming at RPE about 14 and HR 110-140 bpm (age 50 and over). No source derives stage 2 from the HR at the end of stage 1. In the 2nd minute the rider gives a Borg 6-20 rating: below 10 add 1 kp, 10-11 add 0.5 kp, 12-16 keep, 17 or more stop (retest another day); a raised load extends the test by 1 minute.
+5. **HR used:** mean of the readings at 3:15, 3:30, 3:45 and 4:00 of each stage.
+6. **Cool-down:** about 3 min easy (the app's addition).
+7. **Result:** estimate, plausible range, quality score, and whether to repeat. Full detail: [VO2_TEST_SPEC.md](VO2_TEST_SPEC.md).
 
 Rider power is the control variable, **not speed**: assisted cycling lowers the rider's power and oxygen use together, so the crank power (which is what the bike measures) is the right input, and the road, wind and assist level only change speed.
 
 ### 4.3 Safety and abort rules (parameters to review with a physician)
-- Hard stop if HR exceeds a ceiling (default 85% of predicted HRmax; for age 67 predicted HRmax is about 161 bpm by Tanaka, about 168 by HUNT, so the ceiling is roughly 137-143 bpm) or if the rider reports chest pain, dizziness, breathlessness out of proportion, or taps STOP.
-- Stop if HR signal drops out for more than 10 s.
+- The only stop rule in the Ekblom-Bak sources is **RPE 17 or more in stage 2**. The HR ceiling is the **app's own extra safeguard**, not part of the published test: default 85% of predicted HRmax, with Tanaka 2001 (208 - 0.7 x age, healthy adults, abstract only) giving about 161 bpm at 67 and a ceiling of about 137 bpm. The earlier "about 168 by HUNT" is **unverified and removed**. Note that 137 bpm is below the protocol's own stage-2 target of 110-140 bpm: a physician must decide the ceiling. Also stop if the rider reports chest pain, dizziness, breathlessness out of proportion, or taps STOP.
+- Stop if HR signal drops out for more than 10 s in a stage (seated rest has longer limits; spec 8.1).
 - Beta-blockers and some other medicines make HR-based estimates invalid; the app asks and refuses to compute.
 - The app is a coaching tool, not a medical device, and says so.
 
 ### 4.4 Quality score and repeat rule
-Score from: power inside the band for at least 80% of each stage, steady-state HR (change under 5 bpm between minute 3 and 4), HR sensor coverage above 90%, no stop-and-go, and a flat route. Repeat is suggested after 48 hours if the score is below threshold, or if the result differs from the previous valid test by more than twice the method error.
+Score from: power inside the band for at least 80% of each stage, steady-state HR (change under 5 bpm between minute 3 and 4), HR sensor coverage above 90%, no stop-and-go, and a flat route. Repeat is suggested after at least 24 hours (`retestMinHours`, spec 2.7; the single value) if the score is below the threshold (spec 2.9), or if the result differs from the previous valid test by more than twice the method error.
 
 ## 5. How reliable is it? (research summary)
 
 | Source of error | Evidence | Effect |
 |---|---|---|
-| **Method** | Ekblom-Bak submaximal test: CV 8.7-9.3%, SEE about 0.28-0.30 L/min, versus Astrand CV about 18%; test-retest no mean difference (Ekblom-Bak 2014, 2016) | about +/-9% |
+| **Method** | Ekblom-Bak submaximal test, laboratory: CV 8.7-9.4%, SEE 0.28 L/min; 95% limits of agreement -0.54..+0.76 L/min (men), -0.61..+0.44 (women) (Bjorkman 2016); ages 65-75: -0.43..+0.39 (women), -0.60..+0.70 (men), low-fit men overestimated (Vaisanen 2020) | lab limits, not this e-bike use |
 | **Age-predicted HRmax** | HUNT: SEE 10.8 bpm; agreement limits about +/-18-24 bpm across equations (Nes 2013, Martin 2025) | matters only for methods that extrapolate to HRmax |
 | **Heart-rate ratio method (Uth)** | poor agreement in middle-aged and older adults (Ducharme 2021); precluded for cycling (Vehrs 2019) | **do not use** (the Home Assistant package currently shows it as an attribute: remove) |
 | **Wrist optical HR** | mean difference during cycling -4.5 bpm (Zhang 2020); accuracy varies by device and is lower on a bike (Gillinov 2017, Reddy 2018); placement matters (Vermunicht 2025); chest straps agree best (Merrigan 2022) | a few bpm at steady state; **use a chest strap for tests** |
@@ -99,7 +100,7 @@ Score from: power inside the band for at least 80% of each stage, steady-state H
 | **E-bike physiology** | assistance lowers rider power, HR and VO2 together (Sperlich 2012, McVicar 2022, Bonardi 2025) | confirms rider power as the input |
 | **Smartwatch VO2max, for comparison** | exercise-based wearable estimates: bias near zero but individual limits about +/-10 ml/kg/min (Molina-Garcia 2022); Apple Watch MAPE about 13% (Lambe 2025) | the watch's own number is not a gold standard either |
 
-**Realistic overall:** if everything is done well (chest strap, steady stages, same conditions), expect roughly **+/-12-15%** on the absolute VO2max value (method about 9% combined with power and HR errors), and **better than that for change over time**. A result of 36 should be read as "somewhere around 31-41". It is good for seeing a trend over months, not for diagnosis. Anyone needing the true value needs a laboratory gas-exchange test.
+**Realistic overall:** the earlier statement of "+/-12-15%" understated the error for this rider and is withdrawn. For a man aged 65-75 the laboratory validation found individual 95% limits of about +/-0.6-0.7 L/min, which is roughly +/-20-25% of a typical older man's VO2max (2.83 L/min in that study) and about +/-30% at 2.2 L/min (simple arithmetic by the spec author, not a figure from the paper); low-fit men were overestimated. That is the error on a braked ergometer; the e-bike/road adaptation is **not validated** (assist, gradient, wind, rolling resistance, an unvalidated Bosch power signal) and probably adds error. The individual error is persistent over years (r 0.84), so the test is better for **change over months** (estimated change tracked measured change, r 0.75, slope 0.88) than for one number. It is not for diagnosis; anyone needing the true value needs a laboratory gas-exchange test.
 
 The estimate currently in the Home Assistant package (10.8 x best 5-minute W/kg + 7) is the oxygen cost of the best 5-minute power. It is a **lower bound** of VO2max, not an estimate of it, because a rider seldom produces a true all-out 5 minutes. It should be renamed and replaced by the test result.
 
@@ -113,7 +114,7 @@ Citations are given as author and year; the papers were found with a Consensus l
 | **Xiaomi Watch 5** (Wear OS per product pages) | good at steady state, worse in intervals | medium | Needs a small **Wear OS app** that reads HR via Health Services in an exercise session and sends it to the phone through the Wearable Data Layer. The Home Assistant app on the watch is not real-time enough. Whether the watch can broadcast HR over standard Bluetooth was **not verified**. |
 | Health Connect | late, batched | low | Not usable live. |
 
-The app records which source was used and shows a quality indicator; a test with only wrist HR is accepted but flagged.
+The app records which source was used and shows a quality indicator. A guided test accepts a **chest strap only**; wrist heart rate is not accepted for a test (spec 2.1, contract `hr_source = chest_strap`).
 
 ## 7. Data and privacy
 Health data (HR, weight, age, tests) stays on the phone and in your Home Assistant; nothing goes to a third party. Raw records keep the existing CRC and `(boot, seq)` identity. Exports: CSV and FIT/GPX are optional later.
@@ -123,7 +124,7 @@ Health data (HR, weight, age, tests) stays on the phone and in your Home Assista
 2. **App MVP:** pairing, Status screen, live Ride screen, set time.
 3. **Relay:** publish to the broker, acks back, signed acks.
 4. **HR:** chest strap first, Wear OS companion second.
-5. **VO2 coach:** state machine and audio, with the second estimate, then the published equation once verified.
+5. **VO2 coach:** state machine and audio with the published Ekblom-Bak equation (verified; no second estimate, dropped, spec 2.6). Task order: spec 9.1.
 6. **Validation:** compare against the watch's value and, if possible, one laboratory test; calibrate Bosch power against pedal meter data if available.
 
 ## 9. Open questions

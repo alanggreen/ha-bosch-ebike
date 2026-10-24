@@ -7,6 +7,7 @@ The project has four parts that are built and tested separately: the **firmware*
 |---|---|---|
 | BLE link: GATT service, 41-byte status, 56-byte record, commands | firmware <-> Android app | [PHONE_LINK_PROTOCOL.md](../app/PHONE_LINK_PROTOCOL.md) |
 | MQTT records and acknowledgements, exactly-once rules, sensor key order | firmware / Android app -> Home Assistant | [MQTT_RECORDS.md](MQTT_RECORDS.md) |
+| DRAFT, not in force: VO2max test result ("Ekblom-Bak style estimate") and its acknowledgement (stored, or rejected with a reason); `mac` text is `<test_id>` | Android app <-> Home Assistant | [VO2_RESULT.md](VO2_RESULT.md) |
 | Board measurements, hole pattern, screw length | you -> enclosure | `hardware/enclosure/README.md` |
 
 ## How to change a contract
