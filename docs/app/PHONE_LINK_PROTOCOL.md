@@ -95,3 +95,45 @@ Home Assistant drops duplicates by `(boot, seq)`.
 7. Release: write `03` + boot (u32) + seq (u32) of the last record you received. Status unacked drops
    and the result byte reads 0.
 8. Check Home Assistant still receives the live data/rides over MQTT during all this.
+
+## Version 2: provisioning a unit for a rider (agreed 2026-11-17, NOT YET IN FORCE)
+
+Everything above stays in force until firmware and app ship version 2 together (plan: [../plans/MULTI_RIDER.md](../plans/MULTI_RIDER.md)).
+MQTT side: [../contracts/MQTT_RECORDS.md](../contracts/MQTT_RECORDS.md), version 2.
+
+### Record
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 50 | u16 | **assignment** (was `reserved`, always 0 in version 1). 0 = recorded before the unit was ever provisioned |
+
+Size (56), CRC coverage (bytes 0-51) and `(boot, seq)` identity are unchanged. Old records on the card read as assignment 0.
+
+### Identity characteristic `…6d05` (read, encrypted)
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | u8 | format version (1) |
+| 1 | u8 | flags: 0x01 rider set, 0x02 MQTT login set, 0x04 home Wi-Fi set, 0x08 hotspot Wi-Fi set, 0x10 ack secret set |
+| 2 | u8 × 6 | MAC; `unit_id` is the lower-case hex of bytes 5-7 of this block (the last 3 MAC bytes) |
+| 8 | u16 | assignment (0 = never provisioned) |
+| 10 | u8 | rider length L (0-32) |
+| 11 | u8 × L | rider slug, ASCII |
+
+Passwords and secrets are write-only: no read ever returns them.
+
+### Commands (added)
+
+| Opcode | Payload | Meaning |
+|--------|---------|---------|
+| `06` | u8 key, u8 len, len bytes | **Set config** (staged in RAM, not yet saved). Keys: 1 rider slug, 2 MQTT user, 3 MQTT password, 4 ack secret, 5 home SSID, 6 home Wi-Fi password, 7 hotspot SSID, 8 hotspot password, 9 broker host, 10 broker port (u16). Max 64 bytes per value. `len` 0 clears a value. |
+| `07` | – | **Commit config.** Needs rider, MQTT user and MQTT password (staged or already saved). Writes flash; a **different** rider raises the assignment by one. Result 0, then the unit restarts about 1 s later to use the new settings. |
+| `08` | – | **Unpair.** Forgets this phone and opens the pairing window. |
+
+Results (added): 7 config incomplete or invalid, 8 flash write failed.
+
+### Pairing window
+
+The 5-minute window in which the first device to bond becomes *the* phone opens: at power-up while no phone is bonded; on a 5-second press
+of the BOOT button; after `08`; and from the HA button **eBike Pair phone** when the unit is online. Moving a unit to another rider = unpair,
+pair the new rider's phone, provision with the new rider.

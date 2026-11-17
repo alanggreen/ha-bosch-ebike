@@ -60,3 +60,41 @@ secret as key (`ack_mac()` in `backfill_core.py`, checked by the ESP32 and by th
    acknowledged it. The phone forwards an ack to the ESP32 as `ACK_UP_TO(boot, seq)` over BLE.
 4. **Everything unacknowledged is simply published again** after a timeout or reconnect. Repeats are harmless.
 5. Home Assistant stores the record durably **before** it publishes the ack.
+
+## Version 2: several units, one rider each (agreed 2026-11-17, NOT YET IN FORCE)
+
+Everything above stays in force until the receiver, the firmware and the app ship version 2 together (plan:
+[../plans/MULTI_RIDER.md](../plans/MULTI_RIDER.md)). Version 2 changes only what is listed here; the exactly-once rules are unchanged
+and apply **per unit**.
+
+### Topics per unit
+
+`<unit_id>` is the last 3 bytes of the unit's MAC in lower-case hex (e.g. `a1b2c3`). The old default topic `ebike-bridge-mobile/ride_log` is dropped.
+
+| Topic | Direction | QoS | Content |
+|---|---|---|---|
+| `ebike/<unit_id>/ride_log` | sender -> HA | 1, not retained | one JSON record per message |
+| `ebike/<unit_id>/ride_log/ack` | HA -> senders | 1 | as in version 1; HMAC with **this unit's** ack secret |
+| `ebike/<unit_id>/ride_log/status` | ESP32 -> HA | 0 | as in version 1 |
+| `ebike/<unit_id>/assignment` | ESP32 and phone -> HA | 1, **retained** | `{"assign":N,"rider":"<slug>"}`, published on every connect |
+
+### Record
+
+- New field `assign` (integer 1-65535): the assignment the record was recorded under. Left out when 0 ("before the unit was ever provisioned").
+  It is a reserved field like `boot` and `seq`, not a sensor value.
+- The BLE record carries it in bytes 50-51 (see the phone link protocol, version 2).
+
+### Assignment and rider
+
+- `rider` is the slug of a Home Assistant person (`person.alan` -> `alan`): lower-case `a-z`, `0-9`, `_`, 1-32 characters.
+- A unit's assignment number goes up by one each time the unit is given a **different** rider and never goes back. Re-provisioning the same
+  rider (a new password, a new Wi-Fi) keeps the number.
+- Home Assistant remembers every `(unit_id, assign) -> rider` it has seen, durably, and never rewrites one. A record belongs to the rider of
+  its own `(unit_id, assign)`, not to the unit's current rider.
+- `assign` 0 resolves through the receiver's configuration (`legacy_rider` per unit); for unit 1 that is `alan`.
+- A record whose assignment is not known yet is **still stored and acknowledged** (rule 5 is unchanged); only its rider-level statistics wait until
+  the assignment arrives.
+
+### Duplicate filter
+
+The high-water mark of rule 1 is kept per `(unit_id, boot)`. Two units may never block each other, even if their random boot ids collide.

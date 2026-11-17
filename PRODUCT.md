@@ -9,7 +9,7 @@ android
 Second surface: the Home Assistant dashboard (web, see surface brief dashboard-mockups-analysis-html). The Android companion app (docs/app/ANDROID_APP_DESIGN.md) is the active design work; it is native Material 3 themed with the dashboard's world.
 
 ## Users
-One rider (owner of a Bosch eBike Smart System bike, EU account, Home Assistant at home on the LAN). Age 67, 61 kg. Reviews rides mostly afterwards on desktop or tablet; on the bike wants a phone-only live strip with no analysis. Other household members are not a confirmed audience.
+Household members who ride, all on the owner's one Home Assistant (decided 2026-11-17; design in `docs/plans/MULTI_RIDER.md`). Each rider has their own bike, ESP32 bridge unit, phone and Bosch account, and the one dashboard shows everyone; there is no per-user privacy. The first rider is the owner (Bosch eBike Smart System bike, EU account, Home Assistant at home on the LAN), age 67, 61 kg. Reviews rides mostly afterwards on desktop or tablet; on the bike wants a phone-only live strip with no analysis. Until the multi-rider work ships, the implemented system serves the owner alone.
 
 ## Product Purpose
 A Home Assistant Lovelace dashboard for this fork of `ha-bosch-ebike`: shows live and historical eBike data, with the rider's own power (watts the rider produces, not motor assist) and VO2max as the headline interests. Success: after a ride the rider can see how hard they worked, in which power zones, how it compares with earlier rides, and how fitness is trending; during a ride a phone shows live power at a glance.
